@@ -1,2 +1,2 @@
-# ArduinoProJect
+# AVRProject
 Проекты по AVR
