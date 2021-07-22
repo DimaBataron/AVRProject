@@ -46,6 +46,9 @@ TaskProcs: .dw WordTr            ; [00]
 		   .dw StartInit		 ; [02] стартовая инициализация
 		   .dw TrData			 ; [03] Передача символов на экран
 		   .dw Clean			 ; [04] Очистка
+		   .dw PosYkP			 ; [05] Позиционирование строки
+		   .dw PosYkCol			 ; [06] Позиционирование столбца
+		   .dw TrPointSym		 ; [07] Вывод одного символа(указателя например)
 ;При старте программы сохраняю адрес начала массива байт в СurrentByte
 ;МассивИнициализации
 InitSSD : .db 0xA8,0x00,0xD3,00,0x40,0xA1,0xC0,0xDA,0x12,0x81,0xFF,0xA4,0xA6,0xD5 ;14
@@ -155,17 +158,67 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 ;1		1		0	fclc/32
 ;1		1		1	fclc/64
 ;==================================================================================
+;Постановка процедур в очередь
+	call StartInitQue ;Процедура постановки задачи стартовой инициализации TWI в очередь
+	
+	ldi FisByte,0
+	ldi SecByte,7
+	call QuePosYkP ;установка строки
 
-call StartInitQue ;Процедура постановки задачи стартовой инициализации TWI в очередь 
-	ldi FisByte,127 ;загружаю количество очищаемых символов
+	ldi FisByte,0
+	ldi SecByte,15
+	call QuePosYkCol ;установка символа
+
+	ldi FisByte,128 ;загружаю количество очищаемых символов
 	call QueClean
-call StartTrData   ;Процедура подготовки данных перед передачей данных на экран по TWI 
+	call StartTrData   ;Процедура подготовки данных перед передачей данных на экран по TWI 
+
+;Вывожу указатель меню и первую строку
+	
+	ldi FisByte,1 ;позиционирование строки. Начало
+	ldi SecByte,2 ;конец
+	call QuePosYkP ;Устанавливаю строку
+
+	ldi FisByte,1
+	ldi SecByte,15
+	call QuePosYkCol ;Устанавливаю столбец
+
 	ldi FisByte, low(MainM*2)
 	ldi SecByte, high(MainM*2)
-	call QueTrData
-	ldi FisByte, low(MainM1*2)
-	ldi SecByte, high(MainM1*2)
-	call QueTrData
+	call QueTrData  ;Вывожу массив
+
+	ldi FisByte,0
+	ldi SecByte,15
+	call QuePosYkCol ;Устанавливаю столбец
+
+	ldi FisByte, low(point*2)  ;вывод одного символа
+	ldi SecByte, high(point*2)
+	call QueTrPointSym
+
+
+
+	;ldi FisByte,1 ;позиционирование строки. Начало
+	;ldi SecByte,2 ;конец
+	;call QuePosYkP
+
+	;ldi SecByte,15
+	;call QuePosYkCol
+
+	;ldi FisByte, low(MainM*2)
+	;ldi SecByte, high(MainM*2)
+	;call QueTrData
+
+	;ldi FisByte,2
+	;ldi SecByte,3
+	;call QuePosYkP
+
+	;ldi FisByte,1
+	;ldi SecByte,15
+	;call QuePosYkCol
+
+	;ldi FisByte, low(MainM1*2)
+	;ldi SecByte, high(MainM1*2)
+	;call QueTrData
 
 
 
@@ -405,28 +458,35 @@ StartTrData : ldi r18,0
 			  DOUT TrDataCount,r18	;количество байт одного символа которые уже передали
 			  DOUT TrDatF,r18	;При первом входе беру адреса массива для вывода из данных процедуры.
 			  ret
-
+;----------------->>>>QuePosYkP<<<<----------------------------------
+;Постановка в очередь процедуры позиционирования указателя.
+QuePosYkP:	cli						;правильно ли восстанавливать(запрещать) прерывания выходя отсюда?
+			ldi OSRG, TS_PosYkP
+			call QueProcedur
+			ldi Quant,1
+			call QueData
+			call PrSt
+			ret
 ;;----------------->>>PosYkP<<<-----------------------------------------
 ;Процедура позиционирования указателя страница(строка)
 ;Используемые байты в оперативе 
 ;NumWhilePos		EndTrCom			CountPosYk
-;SelectPosYk		XPosYkLO			XPosYkHi
+;SelectPosYk		
 
 ;NumWhilePos		количество переданных байт позиционирования
 ;CountPosYk	        счетчик состояния позиционирования.
 ;SelectPosYk		вложенный для определения байта.
-;XPosYkLO			для хранения указателя передаваемого байта команды из ОЗУ
-;XPosYkHi			тоже только старшего
 ;SetPagSt:			стартовый адрес страницы 0-7(строки)
 ;SetPagEnd:			конечный адрес страницы 0-7(строки)
 
-;1.Использование: Загрузить в ОЗУ по адресам  SetPagSt SetPagEnd
-;Стартовый и конечный адрес страницы(только для горизонтальной и вертикальной адресации)
-;2.Занести в пару значений XPosYkHi:XPosYkLO адрес ОЗУ SetPagSt
-;3.Установить флаг FlagCon[2]
-;4.После установки всех флагов сформировать состояние старт.
-/*
-PosYkP:	   DIN r18,NumWhilePos
+;1.Использование: Загрузить в массив данных 2байта SetPagSt SetPagEnd
+;1й байт начальная строка записи
+;2й байт конечная строка записи
+;В данной версии загрузка происходит в Массив данных процедур, сначала лежит SetPagSt
+; потом  SetPagEnd, стартовый и конечный адрес страницы(только для горизонтальной и вертикальной адресации)
+
+PosYkP:	   cli
+		   DIN r18,NumWhilePos
 		   cpi r18,3
 		   brge  EndTrCom  ;переход если передали 3байта позиционирования строки
 		   DIN r19,CountPosYk
@@ -465,69 +525,78 @@ CounComand: ldi r19,0
 			DOUT TWCR,r18
 			reti
 ;Cюда переходим для отправки оставшихся байт команды
-CouComCon:  DIN XL,XPosYkLO
-			DIN XH,XPosYkHi
-			LD r18,X+
-			DOUT TWDR,r18
-			DOUT XPosYkLO, XL
-			DOUT XPosYkHi,XH
-			ldi r18,0b10000101
-			DOUT TWCR,r18 ; Продолжаем передачу
-			reti
+CouComCon: DIN ZL, ReadDatL ;берем из массива данные которые будем писать
+		   DIN ZH, ReadDatH
+		   ld OSRG,Z+
+		   DOUT TWDR, OSRG
+		   DOUT ReadDatH,ZH
+		   DOUT ReadDatL,ZL
+		   ldi r18,0b10000101 ; Продолжаем передачу
+		   DOUT TWCR,r18 ;Формирую состояние повстарт
+		   reti
 ;Передали все данные тепрь главное выйти отсюда
 EndTrCom:	ldi r18,0
 			DOUT NumWhilePos,r18
 			DOUT CountPosYk,r18
 			DOUT SelectPosYk,r18
-			DIN r18,FlagCon       ;<<<<<----------------Здесь навреное изменить
-			ANDI r18,0b11111011
-			DOUT FlagCon,r18
+			call ShiftQue
 			LDI r18,0b10100101
 			DOUT TWCR,r18 ;Формирую состояние повстарт
 			reti
-;------------------>>>PosYkCol<<<-----------------------------------------
-;Процедура позиционирования указателя страница(строка)
-;Используемые байты в оперативе 
-;NumWhilePos		CountPosYk			SetColSt			SetColEnd
-;SelectPosYk		XPosComLo			XPosComHi
-;1.Использование: Загрузить в ОЗУ по адресам  SetColSt SetColEnd
-;Стартовый и конечный адрес страницы(только для горизонтальной и вертикальной адресации)
-;2.Занести в пару значений XPosComHi:XPosComLo адрес ОЗУ SetColSt
-;3.Установить флаг FlagCon[3]
-;4.После установки всех флагов сформировать состояние старт
-;NumWhilePos		количество переданных байт позиционирования
 
-PosYkCol:  DIN r18,NumWhilePos
+;----------------->>>QuePosYkCol<<--------------------------------------
+;Процедура постановки в очередь процедуры позиционрирования столбца экрана
+QuePosYkCol:		cli
+					ldi OSRG, TS_PosYkCol ; добавляю задачу в очередь
+					call QueProcedur
+					ldi Quant,1  ;указываем что пишем одно слово
+					call QueData
+					call PrSt
+					ret
+;------------------>>>PosYkCol<<<-----------------------------------------
+;Процедура позиционирования указателя столбца
+;Используемые байты в оперативе 
+;Использование: положить в регистры FisByte и SecByte номер начального и конечного символа 
+;Запустить процедуру PosYkCol для постановки задачи в очередь.
+;Дождаться выполнения.
+
+;NumWhilePos		CountPosYk			SelectPosYk
+;NumWhilePos		количество переданных байт позиционирования
+;CountPosYk	        счетчик состояния позиционирования.
+;SelectPosYk		вложенный для определения байта.
+
+PosYkCol:  cli
+		   DIN r18,NumWhilePos
 		   cpi r18,3
 		   brge  EndTrCom12  ;переход если передали 3байта позиционирования строки
-		   DIN r19,CountPosYk ;счетчик состояния позиционирования.
-		   cpi r19,0
+		   DIN FsMM,CountPosYk ;счетчик состояния позиционирования.
+		   cpi FsMM,0
 		   BRNE CountContr1 ; Переход если повстарт уже было сформировано
 ;Сюда переходим для формирования состояния повстарт
-				inc r19
-				DOUT CountPosYk,r19
-				ldi r19, 0b10100101 ;формирую состояние повстарт
-				DOUT TWCR,r19
+				inc FsMM
+				DOUT CountPosYk,FsMM
+				ldi FsMM, 0b10100101 ;формирую состояние повстарт
+				DOUT TWCR,FsMM
 				reti
-CountContr1:	cpi r19,1
+CountContr1:	cpi FsMM,1
 				BRNE CounComand1 ;<Переходим для передачи непосредственно команды
 ;Cюда перешли для передачи управляющего байта
-				inc r19
-				DOUT CountPosYk,r19
-				ldi r19,0x00   
-				DOUT TWDR,r19 ; передаем управляющий байт
-				ldi r19,0b10000101
-				DOUT TWCR,r19 ;Продолжаем передачу
+				inc FsMM
+				DOUT CountPosYk,FsMM
+				ldi FsMM,0x00   
+				DOUT TWDR,FsMM ; передаем управляющий байт
+				ldi FsMM,0b10000101
+				DOUT TWCR,FsMM ;Продолжаем передачу
 				reti
 				Jmp CounComand1
 EndTrCom12:		RJMP EndTrCom1
 ;Cюда переходим для передачи команды
-CounComand1:	ldi r19,0
-				DOUT CountPosYk,r19
-				DIN r19,SelectPosYk ;вложенный для определения байта.
+CounComand1:	ldi FsMM,0
+				DOUT CountPosYk,FsMM
+				DIN FsMM,SelectPosYk ;вложенный для определения байта.
 				inc r18
 				DOUT NumWhilePos,r18
-				cpi r19,0
+				cpi FsMM,0
 				BRNE CouComCon1 ;Переход для отправки конфигурационных байт команды
 ;Здесь отправляем первый байт команды
 			ldi r18,0x21 ;Set Column Address
@@ -538,19 +607,19 @@ CounComand1:	ldi r19,0
 			DOUT TWCR,r18
 			reti
 ;Cюда переходим для отправки оставшихся байт команды
-CouComCon1:		DIN XL,XPosComLo ; Переписать
-				DIN XH,XPosComHi  ;
-				LD r18,X+
-				; Сдесь изменил
-				lsl r18
-				lsl r18
-				lsl r18 ;умножение на 8
-				cpi r18,120 ; Последний символ. Сдвигаем до конца.
+CouComCon1:		DIN ZL, ReadDatL ;берем из массива данные которые будем писать
+				DIN ZH, ReadDatH
+				ld OSRG,Z+
+				lsl OSRG
+				lsl OSRG
+				lsl OSRG ;сдвиг влево на 3 разряда равносильно умножению на 8
+				DOUT ReadDatH,ZH
+				DOUT ReadDatL,ZL
+
+				cpi OSRG,120 ; Последний символ. Сдвигаем до конца.
 				Brne TrComDat1 ;не конец перейти далее
-				ldi r18,127
-TrComDat1:		DOUT TWDR,r18
-				DOUT XPosComLo,XL
-				DOUT XPosComHi,XH
+				ldi OSRG,127
+TrComDat1:		DOUT TWDR,OSRG
 				ldi r18,0b10000101
 				DOUT TWCR,r18 ; Продолжаем передачу
 				reti
@@ -559,13 +628,10 @@ EndTrCom1:		ldi r18,0
 				DOUT NumWhilePos,r18
 				DOUT CountPosYk,r18
 				DOUT SelectPosYk,r18
-				DIN r18,FlagCon          ;<<<<<<------------------Cюда
-				ANDI r18,0b11110111  
-				DOUT FlagCon,r18
+				call ShiftQue
 				LDI r18,0b10100101
 				DOUT TWCR,r18 ;Формирую состояние повстарт
 				reti
-*/
 ;------------------>>>QueClean<<<------------------------
 ;Процедура постановки в очередь очистки дисплея.
 ;Перед вызовом в FisByte записываю количество очищаемых символов.
@@ -577,7 +643,7 @@ QueClean:	cli
 			ldi Quant,1 ;указываю что пишу одно слово
 			call QueData
 			call PrSt
-			reti
+			ret
 ;------------------>> Clean <<-----------------------------
 ;r18 r19 r20
 ;CleanNow:              очищаемый в данный момент символ
@@ -649,6 +715,68 @@ EndClean:   ldi r18,0
 			DOUT TWCR,r18 ;Формирую состояние повстарт
 			call ShiftQue
 			reti
+
+;--------------------->>>QueTrPointSym<<-----------------------------
+;Процедура постановки в очредь процедуры передачи символа на экран.
+QueTrPointSym:	ldi OSRG, TS_TrPointSym ; Добавляю задачу в очередь
+				call QueProcedur
+				ldi Quant,1 ;Указываем что пишем одно слово
+				call QueData
+				call PrSt
+				ret
+;-------------------->>>TrPointSym<<<---------------------------------
+;Процедура принимающая на вход массив байт для вывода. 0 признак онончания массива.
+TrPointSym: DIN FisByte,TrDatF
+			CPI FisByte,0
+			BRNE TD15 ;переход если не 0
+;Cюда если впервые запустили эту процедуру
+			DIN ZL, ReadDatL ;берем из массива данные которые будем писать
+			DIN ZH, ReadDatH
+			ld OSRG,Z+
+			DOUT TrDatLow,OSRG;сначала пишем младший адрес массива выводимых символов TrDatLow=OSRG 
+			ld OSRG,Z+
+			DOUT TrDatHi,OSRG
+			DOUT ReadDatH,ZH
+			DOUT ReadDatL,ZL
+			inc FisByte
+			DOUT TrDatF,FisByte ;TrDatF=1
+; Cюда для продолжения передачи
+TD15:	DIN r18, TrDataCountB
+		cpi r18,0 
+		BRNE TrComp1 ;   если не равно переход(уже передавали управляющий байт)
+;Сюда для передачи управляющего байта
+		ldi r18,1
+		DOUT TrDataCountB,r18
+		ldi r18,0x40 ;устанавливаем управляющий байт, символизирующий о сплошном массиве байт
+		DOUT TWDR,r18
+		ldi r18,0b10000101 ; Продолжаем передачу
+		DOUT TWCR,r18
+		reti
+TrComp1:	DIN FsMM,TrDataCount
+			cpi FsMM,8
+			BRGE EndTrData1		;если конец массива байт обозначабщих символ
+;Если нет получаем байт выводимого символа 
+		DIN ZL, TrDatLow
+		DIN ZH,TrDatHi
+		LPM OSRG, Z+ ;беру байт по вычисленному адресу 
+		DOUT TWDR,OSRG
+		inc FsMM ;TrDataCount++
+		DOUT TrDataCount,FsMM
+		DOUT TrDatLow,ZL
+		DOUT TrDatHi,ZH
+		ldi r18,0b10000101 ; продолжаем передачу
+		DOUT TWCR,r18
+		;call InterSPI ;вызывается сама после окончания передачи
+		reti
+EndTrData1: 	ldi r18,0
+				DOUT TrDataCountB,r18
+				DOUT TrDataCount,r18
+				DOUT TrDatF,r18
+				call ShiftQue
+				ldi r18,0b10100101
+				DOUT TWCR,r18 ; формирую состояние повстарт
+				reti
+
 ;==========================================================================
 ;----------------------->>WordTr<<-----------------------------------------
 ;Процедура передачи слова по SPI
@@ -1374,6 +1502,8 @@ P0x10 :		pop r20
 .org S30+4 S31: .db 0x00,0x01,0x71,0x4E,0x48,0x7F,0x41,0x00			;я
 ;
 .org S31+4 S32:								;ж
+.org S32+4 point: .db 0x00,0x7F,0x7F,0x7F,0x3E,0x1C,0x08,0x00       ;байты указателя(стрелочки)
+
 ;128x32
 ;Программатор
 ;Белый Vin
