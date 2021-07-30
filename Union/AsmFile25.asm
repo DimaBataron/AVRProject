@@ -49,6 +49,8 @@ TaskProcs: .dw WordTr            ; [00]
 		   .dw PosYkP			 ; [05] Позиционирование строки
 		   .dw PosYkCol			 ; [06] Позиционирование столбца
 		   .dw TrPointSym		 ; [07] Вывод одного символа(указателя например)
+		   .dw StopSig			 ; [08] Отправка сигнала стоп
+		   .dw StartSig          ; [09] Отправка сигнала старт
 ;При старте программы сохраняю адрес начала массива байт в СurrentByte
 ;МассивИнициализации
 InitSSD : .db 0xA8,0x00,0xD3,00,0x40,0xA1,0xC0,0xDA,0x12,0x81,0xFF,0xA4,0xA6,0xD5 ;14
@@ -87,6 +89,26 @@ TaskQ0xFF:	inc r16
 			st Z+,r17
 			cpi r16,-56
 			brne TaskQ0xFF
+;===============================================================
+;Очистка ОЗУ
+AM_Flush:	LDI	ZL,Low(MasByte)	; Адрес начала ОЗУ в индекс
+			LDI	ZH,High(MasByte)
+			CLR	R16			; Очищаем R16
+Flush:		ST 	Z+,R16			; Сохраняем 0 в ячейку памяти
+			CPI	ZH,High(RAMEND+1)	; Достигли конца оперативки?
+			BRNE	Flush			; Нет? Крутимся дальше!
+			CPI	ZL,Low(RAMEND+1)	; А младший байт достиг конца?
+			BRNE	Flush
+ 
+			CLR	ZL			; Очищаем индекс
+			CLR	ZH
+;==============================================================
+;Очистка регистров
+		LDI	ZL, 30		; Адрес самого старшего регистра	
+		CLR	ZH		; А тут у нас будет ноль
+		DEC	ZL		; Уменьшая адрес
+		ST	Z, ZH		; Записываем в регистр 0
+		BRNE	PC-2		; Пока не перебрали все не успокоились
 ;==============================================================
 ldi ZL, low(MasByte) ; Грузим в Z адрес массива байт Z(r31:r30)
 DOUT CurrentByteL, ZL
@@ -109,10 +131,10 @@ ldi Tmp2,0
 ;Задаю режим выводов в соответствии с его назначением
 ;Для управления лампочками
 ; Использую PС 0-5 = A0-A5
-;ldi FisByte,0b00111111
-;out DDRC,FisByte ;Навравление передачи данных в 1(Выход)
-;ldi FisByte,0b00000000
-;out PORTC,FisByte
+ldi FisByte,0b00110001  ;<<<<----Вывод на лампочку
+out DDRC,FisByte ;Навравление передачи данных в 1(Выход)
+ldi FisByte,0b00110000  ; Изменил с учетом подключенного модуля I2C
+out PORTC,FisByte
 ;out PORTB,FisByte ; перевожу ноги в 0.
 ;===========================================================
 ;Int0=PD2=S1=D2 
@@ -159,8 +181,13 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 ;1		1		1	fclc/64
 ;==================================================================================
 ;Постановка процедур в очередь
+;Записываю в регистры начальные значения
+	ldi CE,0
+	ldi CountEncoder,0
+	sei		;Прерывания от TWI не трогают мои регистры
+
 	call StartInitQue ;Процедура постановки задачи стартовой инициализации TWI в очередь
-	
+
 	ldi FisByte,0
 	ldi SecByte,7
 	call QuePosYkP ;установка строки
@@ -169,14 +196,14 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 	ldi SecByte,15
 	call QuePosYkCol ;установка символа
 
-	ldi FisByte,128 ;загружаю количество очищаемых символов
+	ldi FisByte,128 ;<<<<---------- ;загружаю количество очищаемых символов изменить
 	call QueClean
 	call StartTrData   ;Процедура подготовки данных перед передачей данных на экран по TWI 
 
 ;Вывожу указатель меню и первую строку
 	
-	ldi FisByte,1 ;позиционирование строки. Начало
-	ldi SecByte,2 ;конец
+	ldi FisByte,3 ;позиционирование строки. Начало
+	ldi SecByte,5 ;конец
 	call QuePosYkP ;Устанавливаю строку
 
 	ldi FisByte,1
@@ -187,53 +214,130 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 	ldi SecByte, high(MainM*2)
 	call QueTrData  ;Вывожу массив
 
-	ldi FisByte,0
+	ldi FisByte,5 ;позиционирование строки. Начало
+	ldi SecByte,6 ;конец
+	call QuePosYkP ;Устанавливаю строку
+
+	ldi FisByte,1
 	ldi SecByte,15
 	call QuePosYkCol ;Устанавливаю столбец
 
-	ldi FisByte, low(point*2)  ;вывод одного символа
-	ldi SecByte, high(point*2)
-	call QueTrPointSym
+	ldi FisByte, low(MainM1*2)
+	ldi SecByte, high(MainM1*2)
+	call QueTrData  ;Вывожу массив 2
 
+	call QueStopSig ; Ставлю в очередь отправуку команды стоп модулю
 
+	call InitPoInfPro ;Инициализирую начальные значения перед выводом указателя
+sei
 
-	;ldi FisByte,1 ;позиционирование строки. Начало
-	;ldi SecByte,2 ;конец
-	;call QuePosYkP
-
-	;ldi SecByte,15
-	;call QuePosYkCol
-
-	;ldi FisByte, low(MainM*2)
-	;ldi SecByte, high(MainM*2)
-	;call QueTrData
-
-	;ldi FisByte,2
-	;ldi SecByte,3
-	;call QuePosYkP
-
-	;ldi FisByte,1
-	;ldi SecByte,15
-	;call QuePosYkCol
-
-	;ldi FisByte, low(MainM1*2)
-	;ldi SecByte, high(MainM1*2)
-	;call QueTrData
-
-
-
+	call InterSPI
 ;Тут старт программы
 ldi CE,0
-call Encoder
-		ldi r18,0b10100101 ;формируем состояние СТАРТ на шине TWI
-		DOUT TWCR,r18
-		sei		;разрешаю прерывания
+;call Encoder
+;sei		разрешаю прерывания
 Main:	nop
 		nop
 		nop
 		rjmp Main
 ;===========================================================
 ;;Процедуры
+;------------------>>QueStartSig<<------------------------
+;Постановка в очередь отправки сигнала старт.
+QueStartSig:	cli
+				ldi OSRG, TS_StartSig ;добавляю задачу в очередь
+				call QueProcedur
+				call PrSt
+				ret
+;------------------>>StartSig<<----------------------------
+StartSig:	ldi r18,0b10100101 ;формируем состояние СТАРТ на шине TWI
+			DOUT TWCR,r18
+			reti
+;------------------>>QueStopSig<<--------------------------
+;Процедура постановки в очередь процедуры отправки сигнала стоп модулю TWI
+QueStopSig: cli
+			ldi OSRG, TS_StopSig ;добавляю задачу в очередь
+			call QueProcedur
+			call PrSt
+			ret
+;-------------------->>StopSig<<-------------------------- 
+;Процедура отправки сигнала стоп модулю TWI
+;Формирую состояние стоп
+StopSig:	ldi r18,0b10010101
+			DOUT TWCR,r18
+			;После отправки стоп сдвигаю очередь
+			call ShiftQue
+			ret
+;------------------>>MenSMode<<------------------------------
+;Процедура постановки задачи вывода на экран меню выбора
+;режима работы.
+;Процедура сама проводит предварительную очистку экрана.
+
+MainMod1:	.db "синус",0
+MainMod2:	.db "треугольный",0
+MainMod3:	.db "битцап",0
+MainMod4:	.db "битцап2",0
+;;Очистка
+MenSMode:   ldi FisByte, 0
+			ldi SecByte,7
+			call QuePosYkP
+			
+			ldi FisByte,0
+			ldi SecByte,15
+			call QuePosYkCol
+			
+			ldi FisByte,128
+			call QueClean 
+;Синус
+			ldi FisByte, 2
+			ldi SecByte,3
+			call QuePosYkP
+
+			ldi FisByte,1
+			ldi SecByte,15
+			call QuePosYkCol
+
+			ldi FisByte, low(MainMod1*2)
+			ldi SecByte, high(MainMod1*2)
+			call QueTrData
+;Треугольный 
+		    ldi FisByte, 3
+			ldi SecByte,4
+			call QuePosYkP
+
+			ldi FisByte,1
+			ldi SecByte,15
+			call QuePosYkCol
+
+			ldi FisByte, low(MainMod2*2)
+			ldi SecByte, high(MainMod2*2)
+			call QueTrData
+;БитЦАП
+			ldi FisByte, 4
+			ldi SecByte,5
+			call QuePosYkP
+
+			ldi FisByte,1
+			ldi SecByte,15
+			call QuePosYkCol
+
+			ldi FisByte, low(MainMod3*2)
+			ldi SecByte, high(MainMod3*2)
+			call QueTrData
+;БитЦАП2
+			ldi FisByte, 5
+			ldi SecByte,6
+			call QuePosYkP
+
+			ldi FisByte,1
+			ldi SecByte,15
+			call QuePosYkCol
+
+			ldi FisByte, low(MainMod4*2)
+			ldi SecByte, high(MainMod4*2)
+			call QueTrData
+			ret
+
 ;------------------>>StartInitQue<<--------------------------
 ;Процедура постановки задачи стартовой инициализации в очередь
 StartInitQue:	LDI r18,((AdrSSD0-InitSSD)*2) 
@@ -251,15 +355,17 @@ StartInitQue:	LDI r18,((AdrSSD0-InitSSD)*2)
 				DOUT AdrSSD,r18		;записываем адрес ведомого
 				TWFscl 70,0 ;ставлю 102.6кГЦ скороть работы TWI Fscl ;SSD1306 максимум 400кГц
 ;
+				ldi OSRG,TS_StartSig
+				call QueProcedur
 				ldi OSRG, TS_StartInit ; Добавляю задачу в очередь
 				call QueProcedur
 				call PrSt
 				ret
 ;------------------>>StartInit <<----------------------------
-;Для запуска этой подпрограммы используються такие переменные
+;Для запуска этой подпрограммы используються такие переменные\
+;Стартовая инициализация экранчика(отправка настроек на монитор)
 ;NumWhileInit				;LenMasInit					;InitCount
 ;ZInitLow					;ZInitHi				    ;
-
 ;NumWhileInit	+			количество повторений цикла передачи конфиг битов
 ;LenMasInit		+			длинна массива инициализации
 ;InitCount		+			счетчик состояния инициализации
@@ -431,7 +537,7 @@ PrSt:	;Проверяю завершили ли передачу
 		in Tmp2,SREG ; Сохраняем значение флагов
 		push Tmp2;
 		;Что изменится если заменю на +0??
-		ldi ZL,low(TaskQueue) ;Почему+6??? <<<<<<---------------------------
+		ldi ZL,low(TaskQueue) 
 		ldi ZH,high(TaskQueue) ;вычисляем были ли еще задачи кроме той что положили?
 		ldi r18,1
 		add ZL,r18
@@ -460,8 +566,7 @@ StartTrData : ldi r18,0
 			  ret
 ;----------------->>>>QuePosYkP<<<<----------------------------------
 ;Постановка в очередь процедуры позиционирования указателя.
-QuePosYkP:	cli						;правильно ли восстанавливать(запрещать) прерывания выходя отсюда?
-			ldi OSRG, TS_PosYkP
+QuePosYkP:	ldi OSRG, TS_PosYkP
 			call QueProcedur
 			ldi Quant,1
 			call QueData
@@ -484,42 +589,42 @@ QuePosYkP:	cli						;правильно ли восстанавливать(запрещать) прерывания выходя о
 ;2й байт конечная строка записи
 ;В данной версии загрузка происходит в Массив данных процедур, сначала лежит SetPagSt
 ; потом  SetPagEnd, стартовый и конечный адрес страницы(только для горизонтальной и вертикальной адресации)
-
-PosYkP:	   cli
-		   DIN r18,NumWhilePos
+;Cюда заходит по прерыванию (например после передачи модуля TWI)
+;Ничего не передается пока не выполнится
+PosYkP:	   DIN r18,NumWhilePos
 		   cpi r18,3
 		   brge  EndTrCom  ;переход если передали 3байта позиционирования строки
-		   DIN r19,CountPosYk
-		   cpi r19,0
+		   DIN Quant,CountPosYk
+		   cpi Quant,0
 		   BRNE CountContr ; Переход если повстарт уже было сформировано
 ;Сюда переходим для формирования состояния повстарт
-		   inc r19
-		   DOUT CountPosYk,r19
-		   ldi r19, 0b10100101 ;формирую состояние повстарт
-		   DOUT TWCR,r19
+		   inc Quant
+		   DOUT CountPosYk,Quant
+		   ldi Quant, 0b10100101 ;формирую состояние повстарт
+		   DOUT TWCR,Quant
 		   reti
-CountContr:	cpi r19,1
+CountContr:	cpi Quant,1
 		    BRNE CounComand ;<Переходим для передачи непосредственно команды
 ;Cюда перешли для передачи управляющего байта
-		    inc r19
-		    DOUT CountPosYk,r19
-		    ldi r19,0x00
-			DOUT TWDR,r19 ; передаем управляющий байт
-			ldi r19,0b10000101
-			DOUT TWCR,r19 ;Продолжаем передачу
+		    inc Quant
+		    DOUT CountPosYk,Quant
+		    ldi Quant,0x00
+			DOUT TWDR,Quant ; передаем управляющий байт
+			ldi Quant,0b10000101
+			DOUT TWCR,Quant ;Продолжаем передачу
 			reti
 ;Cюда переходим для передачи команды
-CounComand: ldi r19,0
-			DOUT CountPosYk,r19
-			DIN r19,SelectPosYk
+CounComand: ldi Quant,0
+			DOUT CountPosYk,Quant
+			DIN Quant,SelectPosYk
 			inc r18
 			DOUT NumWhilePos,r18
-			cpi r19,0
+			cpi Quant,0
 			BRNE CouComCon ;Переход для отправки конфигурационных байт команды
 ;Здесь отправляем первый байт команды
 			ldi r18,0x22
-			inc r19
-			DOUT SelectPosYk,r19
+			inc Quant
+			DOUT SelectPosYk,Quant
 			DOUT TWDR,r18
 			ldi r18,0b10000101 ; Продолжаем передачу
 			DOUT TWCR,r18
@@ -546,8 +651,7 @@ EndTrCom:	ldi r18,0
 
 ;----------------->>>QuePosYkCol<<--------------------------------------
 ;Процедура постановки в очередь процедуры позиционрирования столбца экрана
-QuePosYkCol:		cli
-					ldi OSRG, TS_PosYkCol ; добавляю задачу в очередь
+QuePosYkCol:		ldi OSRG, TS_PosYkCol ; добавляю задачу в очередь
 					call QueProcedur
 					ldi Quant,1  ;указываем что пишем одно слово
 					call QueData
@@ -565,43 +669,42 @@ QuePosYkCol:		cli
 ;CountPosYk	        счетчик состояния позиционирования.
 ;SelectPosYk		вложенный для определения байта.
 
-PosYkCol:  cli
-		   DIN r18,NumWhilePos
+PosYkCol:  DIN r18,NumWhilePos
 		   cpi r18,3
 		   brge  EndTrCom12  ;переход если передали 3байта позиционирования строки
-		   DIN FsMM,CountPosYk ;счетчик состояния позиционирования.
-		   cpi FsMM,0
+		   DIN TmpAsH,CountPosYk ;счетчик состояния позиционирования.
+		   cpi TmpAsH,0
 		   BRNE CountContr1 ; Переход если повстарт уже было сформировано
 ;Сюда переходим для формирования состояния повстарт
-				inc FsMM
-				DOUT CountPosYk,FsMM
-				ldi FsMM, 0b10100101 ;формирую состояние повстарт
-				DOUT TWCR,FsMM
+				inc TmpAsH
+				DOUT CountPosYk,TmpAsH
+				ldi TmpAsH, 0b10100101 ;формирую состояние повстарт
+				DOUT TWCR,TmpAsH
 				reti
-CountContr1:	cpi FsMM,1
+CountContr1:	cpi TmpAsH,1
 				BRNE CounComand1 ;<Переходим для передачи непосредственно команды
 ;Cюда перешли для передачи управляющего байта
-				inc FsMM
-				DOUT CountPosYk,FsMM
-				ldi FsMM,0x00   
-				DOUT TWDR,FsMM ; передаем управляющий байт
-				ldi FsMM,0b10000101
-				DOUT TWCR,FsMM ;Продолжаем передачу
+				inc TmpAsH
+				DOUT CountPosYk,TmpAsH
+				ldi TmpAsH,0x00   
+				DOUT TWDR,TmpAsH ; передаем управляющий байт
+				ldi TmpAsH,0b10000101
+				DOUT TWCR,TmpAsH ;Продолжаем передачу
 				reti
 				Jmp CounComand1
 EndTrCom12:		RJMP EndTrCom1
 ;Cюда переходим для передачи команды
-CounComand1:	ldi FsMM,0
-				DOUT CountPosYk,FsMM
-				DIN FsMM,SelectPosYk ;вложенный для определения байта.
+CounComand1:	ldi TmpAsH,0
+				DOUT CountPosYk,TmpAsH
+				DIN TmpAsH,SelectPosYk ;вложенный для определения байта.
 				inc r18
 				DOUT NumWhilePos,r18
-				cpi FsMM,0
+				cpi TmpAsH,0
 				BRNE CouComCon1 ;Переход для отправки конфигурационных байт команды
 ;Здесь отправляем первый байт команды
 			ldi r18,0x21 ;Set Column Address
-			inc r19
-			DOUT SelectPosYk,r19
+			inc TmpAsH
+			DOUT SelectPosYk,TmpAsH
 			DOUT TWDR,r18
 			ldi r18,0b10000101 ; Продолжаем передачу
 			DOUT TWCR,r18
@@ -645,7 +748,7 @@ QueClean:	cli
 			call PrSt
 			ret
 ;------------------>> Clean <<-----------------------------
-;r18 r19 r20
+;r18 r20
 ;CleanNow:              очищаемый в данный момент символ
 ;CleanSym:              количество символов которые надо очистить
 ;CleanWhile:  			очищаемый байт в текущий момент
@@ -670,8 +773,8 @@ Clean:  cli              ;что будет дальше если тут отключу?
 ; Cюда для продолжения передачи
 TD10:		
 	   DIN r18,	CleanNow
-	   DIN r19, CleanSym
-	   cp r18,r19
+	   DIN Quant, CleanSym
+	   cp r18,Quant
 	   BRSH EndClean ; <<Переходим если уже очистили. Беззнаковое сравнение
 ;	   Переходим если чистим дальше 
 	   DIN r20,CleanFlag
@@ -726,6 +829,7 @@ QueTrPointSym:	ldi OSRG, TS_TrPointSym ; Добавляю задачу в очередь
 				ret
 ;-------------------->>>TrPointSym<<<---------------------------------
 ;Процедура принимающая на вход массив байт для вывода. 0 признак онончания массива.
+;Вывод одного символа
 TrPointSym: DIN FisByte,TrDatF
 			CPI FisByte,0
 			BRNE TD15 ;переход если не 0
@@ -752,16 +856,16 @@ TD15:	DIN r18, TrDataCountB
 		ldi r18,0b10000101 ; Продолжаем передачу
 		DOUT TWCR,r18
 		reti
-TrComp1:	DIN FsMM,TrDataCount
-			cpi FsMM,8
+TrComp1:	DIN Quant,TrDataCount
+			cpi Quant,8
 			BRGE EndTrData1		;если конец массива байт обозначабщих символ
 ;Если нет получаем байт выводимого символа 
 		DIN ZL, TrDatLow
 		DIN ZH,TrDatHi
 		LPM OSRG, Z+ ;беру байт по вычисленному адресу 
 		DOUT TWDR,OSRG
-		inc FsMM ;TrDataCount++
-		DOUT TrDataCount,FsMM
+		inc Quant ;TrDataCount++
+		DOUT TrDataCount,Quant
 		DOUT TrDatLow,ZL
 		DOUT TrDatHi,ZH
 		ldi r18,0b10000101 ; продолжаем передачу
@@ -777,6 +881,57 @@ EndTrData1: 	ldi r18,0
 				DOUT TWCR,r18 ; формирую состояние повстарт
 				reti
 
+;-------------------->>InitPoInfPro<<----------------------
+;Процедура записи начальных значений в массив данных используемых при выводе указателя
+InitPoInfPro: ldi r18,0xFF
+			  DOUT PosMemStr,r18
+			  DOUT PosMemStrEnd,r18
+			  DOUT PosMemCol,r18
+			  DOUT PosMemColEnd,r18
+			  ret
+;----------------->>>PoInfPro<<<-----------------------------------------
+;Процедура вывода указателя для позиционирования указателя записывают значения в
+;FsMM стартовая строка
+;FsML конечная
+;FsLM стартовый столбец
+;FsLL конечный столбец
+;Процедура запоминает где был указатель в последний раз. Стирает символ где был указатель до этого.
+;Эта процедура добавляет в очередь необходимые манипуляции
+;Переменные ;PosMemStr
+            ;PosMemStrEnd
+            ;PosMemCol
+            ;PosMemColEnd Хранят текущее положение
+; После нажатия на кнопку запись 0xFF в память где хранились предыдущая позиция указателя меню.
+PoInfPro: DIN OSRG,PosMemStr
+		  cpi OSRG,0xFF
+		  brne PolInfY
+;cюда перешли если выводим впервые
+PolInfN: mov FisByte, FsMM
+		 mov SecByte, FsML
+		 call QuePosYkP   ;Проверил не затирает ли ++++++
+		 ;Сохраняю текущее положение  (для следующего метода)
+		 DOUT PosMemStr, FisByte
+		 DOUT PosMemStrEnd,SecByte
+;Формирую значения перед выводом позиционирования столбца
+		 mov FisByte, FsLM
+		 mov SecByte, FsLL
+		 DOUT PosMemCol, FisByte
+		 DOUT PosMemColEnd,SecByte
+		 call QuePosYkCol ;Проверил не затирает ++++
+		 ldi FisByte, low(point*2)  ;вывод одного символа
+		 ldi SecByte, high(point*2)
+		 call QueTrPointSym	;Проверил ++++
+		 ret
+;сюда перешли если ранее выводили поэтому очищаем место
+PolInfY:	DIN FisByte,PosMemStr
+			DIN SecByte,PosMemStrEnd
+			call QuePosYkP
+			DIN FisByte,PosMemCol
+			DIN SecByte,PosMemColEnd
+			call QuePosYkCol
+			ldi FisByte,1
+			call QueClean 
+			rjmp PolInfN
 ;==========================================================================
 ;----------------------->>WordTr<<-----------------------------------------
 ;Процедура передачи слова по SPI
@@ -829,7 +984,7 @@ SEQL01:		ld Tmp2, Z+			; Грузим в темп байт из очереди
 			pop Tmp2
 			pop ZH
 			pop ZL
-			ret
+			reti
 ;------------------------->>>ShiftQue<<<--------------------------------
 ;Процедура сдвига очереди (Очередь в оперативе)
 ShiftQue:	cli 
@@ -911,6 +1066,42 @@ EndTWordTr:	ldi Tmp2,0
 			ret
 ;
 ;
+;----------------------->>>>>PointCheck<<<<------------------------------------------
+;Процедура вывода указателя
+PointCheck:		sbrs CountEncoder,1 ;пропуск следующей команды если бит установлен
+				rjmp PCh1
+;Cюда перешли если выбран синусоидальный сигнал
+			ldi FsMM,2   ;стартовая строка
+			ldi FsML,3   ;конечная
+			ldi FsLM,0   ;стартовый столбец
+			ldi FsLL, 15 ;конечный столбец
+			call PoInfPro ;процедура вывода указателя
+			ret
+PCh1:		sbrs CountEncoder,2 ;пропуск следующей команды если бит установлен
+			rjmp PCh2
+;Cюда если выбран трехугольный сигнал
+			ldi FsMM,3  ;стартовая строка
+			ldi FsML,4  ;конечная
+			ldi FsLM,0   ;стартовый столбец
+			ldi FsLL, 15 ;конечный столбец
+			call PoInfPro
+			ret
+PCh2:		sbrs CountEncoder,3
+			rjmp PCh3
+;Сюда если вывод старшего пита DAC
+			ldi FsMM,4  ;стартовая строка
+			ldi FsML,5  ;конечная
+			ldi FsLM,0  ; стартовый столбец
+			ldi FsLL, 15; конечный столбец
+		    call PoInfPro
+			ret
+;Cюда если старший бит DAC/2
+PCh3:		ldi FsMM,5  ;стартовая строка
+			ldi FsML,6 ;конечная
+			ldi FsLM,0 ;стартовый столбец
+			ldi FsLL, 15 ;конечный столбец
+			call PoInfPro
+			ret
 ;----------------------->>>>>OpMode<<<<------------------------------------------
 ;Процедура установки режима работы модуля AD9833
 OpMode:		sbrs CountEncoder,1 ;пропуск следующей команды если бит установлен
@@ -1046,7 +1237,7 @@ MPD3:   SBIC PIND,PD3          ;пропуск следующей команды если бит сброшен
 		ret
 		ldi FisByte,0
 		mov Mng1,FisByte
-		ldi SecByte,2   ;95 <<<------Заменил для отладки
+		ldi SecByte,95   ;95 или 2 <<<------Заменил для отладки
 MPD1:	cp SecByte,Mng1
 		BRLT MPD4 ;переход если меньше
 		nop
@@ -1105,7 +1296,8 @@ EndInterSPI: ldi ZL, low(MasByte) ; дальше нет процедур
 ;
 ;
 ; ----------------------->>> Encoder <<<--------------------------------------------------
-Encoder:		in FisByte, PIND
+Encoder:		cli
+				in FisByte, PIND
 				andi FisByte,0b00010000 ;запоминаем состояние второго вывода
 				;для определения в какую сторону повернули
 				mov CE,CountEncoder
@@ -1116,9 +1308,31 @@ Encoder:		in FisByte, PIND
 				ldi Quant,1
 				EOR CountEncoder,Quant
 ;Тут прорисовываем лампочки, перерисовываю меню
-				;out PORTC,CountEncoder <<<<---------------Внимание
+				sbi PORTC,0 ;установка бита
+				sbrs CountEncoder,0 ;пропуск следующей если бит установлен
+				cbi PORTC,0 ;сброс бита
+				
+				;out PORTC,CountEncoder ;<<<<---------------Внимание
 ;Дальше записываю в очередность процедур продедуры вывода на экран данных 
-				;Cюда выводим указатель выбора пункта меню
+				mov Quant,CountEncoder
+				andi Quant,1 
+				cpi Quant,0 
+				brne SFren
+;сюда если выбор сигнала
+				ldi  FsMM,3 ;стартовая строка
+				ldi  FsML,4 ; конечная
+				ldi FsLM,0 ;стартовый столбец
+				ldi FsLL,15 ;конечный столбец
+				rjmp PPoint
+;cюда если выбор частоты
+SFren:			ldi  FsMM,5 ;стартовая строка
+				ldi  FsML,6 ; конечная
+				ldi FsLM,0 ;стартовый столбец
+				ldi FsLL,15 ;конечный столбец	
+;Cюда выводим указатель выбора пункта меню
+PPoint:			call QueStartSig  ;Отправка сигнала старт
+				call PoInfPro ;Вывод указателя пункта меню
+				call QueStopSig ; Отправка сигнала стоп после передачи
 				reti ;Разрешены ли здесь прерывания?? Стоит ли запрещать?
 
 ;Cюда перешли если было нажатие на энкодер
@@ -1158,9 +1372,12 @@ EnC7:			LSL CE
 				andi CountEncoder,0b11100001
 				or CountEncoder,CE
 ;---->>> Здесь перерисовываем меню, выводим значения<<<<------
-;ПОСЛЕ НАЖАТИЯ НЕ ВЫХОДИТЬ В НАЧАЛО. А передать настройки, и ждать/
+;ПОСЛЕ НАЖАТИЯ НЕ ВЫХОДИТЬ В НАЧАЛО. А передать настройки, и ждать
 ;Выход в предыдущее меню по длительному нажатию
-				out PORTC,CountEncoder
+				call QueStartSig
+				call PointCheck
+				call QueStopSig
+				;out PORTC,CountEncoder
 				reti ; Или Ret что с флагом по переходу сюда?
 
 
@@ -1358,9 +1575,10 @@ PresEn:   call Conf_Time0
 		  lsr CE  ; сдвигаю вправо получаю число раное нажатиям
 		  inc CE  ; увеличиваю по нажатию
 		  
-		  ldi SecByte,1;14 изменил на время отладки Т.К. долго думает ;Переменная для сравнения длительности задержки
+		  ldi SecByte,14;14 или 1 изменил на время отладки Т.К. долго думает ;Переменная для сравнения длительности задержки
 		  sei   ;<<<<<-------Внимание дальше может везде возникнуть перывание
 		  call Wait
+		  cli
 		  cpi CE,0
 		  BRLT PE41 ; переход если CЕ<0
 		  rjmp PE42
@@ -1393,7 +1611,12 @@ PE1:	swap CE
 		ori CE,0b00000010
 		andi CountEncoder,0b10011111
 		OR CountEncoder,CE
-		call Encoder
+		ldi FisByte,0xFF
+		DOUT PosMemStr,FisByte ; Указываю о сбросе положения указателя
+		call QueStartSig ;Отправляю сигнал старт
+		call MenSMode ;Прорисовую меню
+		call QueStopSig ;Постановка в очередь отправка сигнала стоп
+		;call Encoder  ;<<<<-------------------- ИЗМЕНИЛ И ЗАРАБОТАЛО
 		reti
 ;Нажатие сделали в меню выбора режима
 PE3: call OpMode ; Передаем команду соответствующую выбранному режиму
@@ -1411,15 +1634,18 @@ Time_ms:    inc Mng1
 ;-------------------------->>Eve_TWI<<--------------------------------
 ;Используються r18,R20, Переходим сюда по прерыванию
 
-Eve_TWI :	DIN r18,TWSR ;получам код статуса
-			DIN r20,SREG ;сохраняем регист статуса в стеке
+Eve_TWI :	DIN r20,SREG ;сохраняем регист статуса в стеке
 			push r20
+			cli
+			DIN r18,TWSR ;получам код статуса
 ;
 			cpi r18,0x08 ;сравнить
 			BRNE P0x08 ;переход если не равны
 ;			
 			;Cюда перешли если успешно сформировано состояние старт
-Tr_Adr:		DIN r20,AdrSSD
+Tr_Adr:		call ShiftQue ;Всегда сдвигаю очередь после передачи старт
+;<<<-----------Передавать что-то начала бесконечно
+			DIN r20,AdrSSD
 			DOUT TWDR,r20 ;пишем адрес в буфер передачи
 			ldi r20,0b10000101 ;старт передачи адресного пакета
 			DOUT TWCR,r20
@@ -1461,7 +1687,13 @@ P0x28 :		cpi r18,0x30
 P0x30 :		cpi r18,0x10
 			BRNE P0x10
 			;Было сформировано состояние повстарт
-			rjmp Tr_Adr
+			DIN r20,AdrSSD
+			DOUT TWDR,r20 ;пишем адрес в буфер передачи
+			ldi r20,0b10000101 ;старт передачи адресного пакета
+			DOUT TWCR,r20
+			pop r20
+			DOUT SREG,r20
+			reti ;выход из прерывания
 ;			
 P0x10 :		pop r20
 			DOUT SREG,r20
