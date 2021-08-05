@@ -6,6 +6,9 @@
  * Модуль передачи байт на микросхему AD9833
  *  Created: 10.07.2021 14:45:18
  *   Author: dima
+ После поворота энкодера начинается лаг
+ Чтение непонятно по какому адресу из ОЗУ. Где хранится адрес начала массива данных
+ Почему указатель указывает туда?
  */ 
 .include "F:/AVR/7.0/packs/atmel/ATmega_DFP/1.6.364/avrasm/inc/m328Pdef.inc"
 .include "E:/A/AssemblerApplication1/AssemblerApplication1/Macro.inc"
@@ -51,6 +54,8 @@ TaskProcs: .dw WordTr            ; [00]
 		   .dw TrPointSym		 ; [07] Вывод одного символа(указателя например)
 		   .dw StopSig			 ; [08] Отправка сигнала стоп
 		   .dw StartSig          ; [09] Отправка сигнала старт
+		   .dw EndQue			 ; [10] Очистка ОЗУ
+		   .dw TrDataReg		 ; [11] Вывод символов из регистров r9-r13
 ;При старте программы сохраняю адрес начала массива байт в СurrentByte
 ;МассивИнициализации
 InitSSD : .db 0xA8,0x00,0xD3,00,0x40,0xA1,0xC0,0xDA,0x12,0x81,0xFF,0xA4,0xA6,0xD5 ;14
@@ -71,8 +76,16 @@ AdrSSD0:
 ;0x20,0x00 Режим горизонтальной адресации
 ;0xAF  включение дисплея
 ;Текст
-MainM:		.db "выборчастоты",0
-MainM1:		.db "выборсигнала",0
+MainM:		.db "выбор частоты",0
+MainM1:		.db "выбор сигнала",0
+FreqOP:			.db "шаг",0
+FreqStep1:		.db "001",0
+FreqStep10:		.db "010",0
+FreqStep100:	.db "100",0
+FreqStep500:	.db "500",0
+Freq:			.db "кгц",0
+FreqStr:		.db "част",0 ;c 4 символа вывод 
+
 ;
 ;============================================================
  Reset:	cli
@@ -200,8 +213,43 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 	call QueClean
 	call StartTrData   ;Процедура подготовки данных перед передачей данных на экран по TWI 
 
-;Вывожу указатель меню и первую строку
-	
+	call MainMenu;Вывожу указатель меню и первую строку
+
+	call QueStopSig ; Ставлю в очередь отправуку команды стоп модулю
+
+	call InitPoInfPro ;Инициализирую начальные значения перед выводом указателя
+	sei
+
+	call InterSPI
+;Тут старт программы
+ldi CE,0
+;call Encoder
+;sei		разрешаю прерывания
+Main:	nop
+		nop
+		nop
+		rjmp Main
+;===========================================================
+;;Процедуры
+;---------------------->>MainFreqTOP<<--------------------
+;Процедура постановки в очередь вывод частоты в самом верху
+MainFreqTOP:	call FreqOut ; вывожу слово "част"
+	   ;Позиционирую указатель
+				ldi FisByte, 7 
+				ldi SecByte,7
+				call QuePosYkP
+				ldi FisByte,5
+				ldi SecByte,15
+				call QuePosYkCol
+				call QueTrDataReg ;Добавление в очередь вывод символов
+	   ;по кодам из регистров
+				ldi FisByte, low(Freq*2)
+				ldi SecByte, high(Freq*2)
+				call QueTrData ;Процедура добавления передачи символов в очередь
+				ret
+;---------------------->>MainMenu<<-----------------------
+;Процедура постановки в очередь данных для вывода начального меню
+MainMenu: 	
 	ldi FisByte,3 ;позиционирование строки. Начало
 	ldi SecByte,5 ;конец
 	call QuePosYkP ;Устанавливаю строку
@@ -225,23 +273,405 @@ out SPCR,FisByte ; конфигурируем модуль SPI на передачу
 	ldi FisByte, low(MainM1*2)
 	ldi SecByte, high(MainM1*2)
 	call QueTrData  ;Вывожу массив 2
+	ret
+;---------------------->>FreqOut<<--------------------------
+;Процедура формирует очередь для вывода слова "част"
+FreqOut:	ldi FisByte, 7
+			ldi SecByte,7
+			call QuePosYkP
+			ldi FisByte,0
+			ldi SecByte,15
+			call QuePosYkCol
+			ldi FisByte, low(FreqStr*2)
+			ldi SecByte, high(FreqStr*2)
+			call QueTrData
+			ret
+;---------------------->>GetSym<<---------------------------
+;Процедура пишет коды символа в регистры r9-r12 r9-старший символ
+ GetSym: ;push r1
+		 ;push r2
+		 ;push r3
+		 ;push r4
+		 ;push r5
+		 ;push r6
+;Переношу значения которые трогать нельзя во временные регистры для вычисления
+;Трогать можно если положу их в стек.
+start:	
 
-	call QueStopSig ; Ставлю в очередь отправуку команды стоп модулю
+		 ldi FisByte,0
+		 mov CE,FisByte ;величина разряда.
 
-	call InitPoInfPro ;Инициализирую начальные значения перед выводом указателя
-sei
+		 mov VremenPrH,FisByte ;обнуляю переменную полученную на предыдущей интерации
+		 mov VremenPrH,FisByte
 
-	call InterSPI
-;Тут старт программы
-ldi CE,0
-;call Encoder
-;sei		разрешаю прерывания
-Main:	nop
-		nop
-		nop
-		rjmp Main
-;===========================================================
-;;Процедуры
+		 mov TmpAsH, NumFrH
+		 mov Quant, NumFrL
+		 subi Quant,low(10000)
+		 sbci TmpAsH,high(10000) ;Времен1=Число-10000
+		 BRMI P1000 ; переход по отрицательному значению
+;Сюда если есть десятки тысяч
+;===============================================================
+;Num1
+		 cpi Quant,0
+		 breq NullSr1   ;переход если 0
+;Cюда если не 0
+WhileKsym1: CPI TmpAsH,0  
+			brlt NullSum1 ;переход ели меньше нуля
+;Cюда для вычилсения номинала символа
+			subi Quant,low(10000)
+			sbci TmpAsH,high(10000) ;Времен1=Времен1-10000
+			inc CE ;CE++
+			rjmp WhileKsym1
+;Cюда для записи полученных значений и подготовки вычисления следующего символа
+NullSr1:    inc CE
+NullSum1:	ldi ThirByte, high(10000) ;10000
+			ldi SecByte, low(10000)
+			mov r1,ThirByte
+			mov r2,SecByte ;записываем множимое
+			
+			mov r5,FisByte ;записываю множитель
+			mov r6,CE
+			call mul16 ;результат в r16:r17 = CE*10000
+			mov ThirByte,NumFrH ; записываем накрученное значение
+			mov SecByte,NumFrL
+
+			sub SecByte,Quant    
+			sbc ThirByte,TmpAsH 
+			MOV Quant,SecByte
+			MOV TmpAsH,ThirByte ;Времен1=Число-(CE*10000)
+
+			MOV  VremenPrH,TmpAsH	;Времен1 предыдущего получения символа
+			MOV  VremenPrL,Quant
+
+			mov Num1,CE
+			mov CE,FisByte
+			rjmp P1000P
+P1000:      mov Num1,FisByte
+			mov TmpAsH,NumFrH    ;Исходное накрученное ЧИСЛО в TmpAsH
+			mov Quant,NumFrL    ;Исходное накрученное ЧИСЛО в Quant
+			mov VremenPrH,NumFrH ;обнуляю переменную полученную на предыдущей интерации
+			mov VremenPrL,NumFrL
+;			
+;
+;	Num2		
+P1000P:  
+		subi Quant,low(1000)
+		sbci TmpAsH,high(1000) ;Времен1=Времен1-1000
+		cpi TmpAsH,0
+		BRMI P10002 ; переход по отрицательному значению
+;Сюда смотрим следующие символы
+		 cpi Quant,0
+		 breq NullSr2   ;переход если 0
+;Cюда если не 0
+WhileKsym2: CPI TmpAsH,0  
+			brlt NullSum2 ;переход ели меньше нуля
+;Cюда для вычилсения номинала символа
+			subi Quant,low(1000)
+			sbci TmpAsH,high(1000) ;Времен1=Времен1-1000
+			inc CE ;CE++
+			rjmp WhileKsym2
+;Cюда для записи полученных значений и подготовки вычисления следующего символа
+NullSr2:	inc CE
+NullSum2:	ldi ThirByte, high(1000) ;1000
+			ldi SecByte, low(1000)
+			mov r1,ThirByte
+			mov r2,SecByte ;записываем множимое
+			
+			mov r5,FisByte ;записываю множитель
+			mov r6,CE
+			call mul16 ;результат в r16:r17 = CE*10009
+			mov ThirByte,VremenPrH ; записываем накрученное значение
+			mov SecByte,VremenPrL 
+
+			sub SecByte,Quant    
+			sbc ThirByte,TmpAsH 
+			
+			MOV Quant,SecByte
+			MOV TmpAsH,ThirByte ;Времен1=Число-(CE*1000)-Времен1ПредыдущейИнтерации
+
+			MOV  VremenPrH,TmpAsH	;Времен1 предыдущего получения символа
+			MOV  VremenPrL,Quant
+
+			mov Num2,CE
+			mov CE,FisByte
+			rjmp P1000P2
+P10002:     mov Num2,FisByte
+			mov Quant,VremenPrL
+			mov TmpAsH,VremenPrH
+;
+;
+;Num3
+P1000P2: 		subi Quant,low(100)
+				sbci TmpAsH,high(100) ;Времен1=Времен1-100
+				cpi TmpAsH,0
+				BRMI P10003 ; переход по отрицательному значению
+;Сюда смотрим следующие символы
+				cpi Quant,0
+				breq NullSr3   ;переход если 0
+;Cюда если не 0
+WhileKsym3: CPI TmpAsH,0  
+			brlt NullSum3 ;переход ели меньше нуля
+;Cюда для вычилсения номинала символа
+			subi Quant,low(100)
+			sbci TmpAsH,high(100) ;Времен1=Времен1-100
+			inc CE ;CE++
+			rjmp WhileKsym3
+;Cюда для записи полученных значений и подготовки вычисления следующего символа
+NullSr3:	inc CE
+NullSum3:	ldi ThirByte, high(100) ;100
+			ldi SecByte, low(100)
+			mov r1,ThirByte
+			mov r2,SecByte ;записываем множимое
+			
+			mov r5,FisByte ;записываю множитель
+			mov r6,CE
+			call mul16 ;результат в r16:r17 = CE*100
+			mov ThirByte,VremenPrH ; записываем накрученное значение
+			mov SecByte,VremenPrL 
+
+			sub SecByte,Quant   
+			sbc ThirByte,TmpAsH 
+			
+			MOV Quant,SecByte
+			MOV TmpAsH,ThirByte ;Времен1=Число-(CE*100)-Времен1ПредыдущейИнтерации
+
+			MOV  VremenPrH,TmpAsH	;Времен1 предыдущего получения символа
+			MOV  VremenPrL,Quant
+
+			mov Num3,CE
+			mov CE,FisByte
+			rjmp P1000P3
+P10003:     mov Num3,FisByte
+			mov Quant,VremenPrL
+			mov TmpAsH,VremenPrH
+
+;Num4
+P1000P3:	subi Quant,low(10)
+			sbci TmpAsH,high(10) ;Времен1=Времен1-10
+				cpi TmpAsH,0
+				BRMI P10004 ; переход по отрицательному значению
+;Сюда смотрим следующие символы
+				cpi Quant,0
+				breq NullSr4   ;переход если 0
+;Cюда если не 0
+WhileKsym4: CPI TmpAsH,0  
+			brlt NullSum4 ;переход ели меньше нуля
+;Cюда для вычилсения номинала символа
+			subi Quant,low(10)
+			sbci TmpAsH,high(10) ;Времен1=Времен1-100
+			inc CE ;CE++
+			rjmp WhileKsym4
+;Cюда для записи полученных значений и подготовки вычисления следующего символа
+NullSr4:	inc CE
+NullSum4:	ldi ThirByte, high(10) ;100
+			ldi SecByte, low(10)
+			mov r1,ThirByte
+			mov r2,SecByte ;записываем множимое
+			
+			mov r5,FisByte ;записываю множитель
+			mov r6,CE
+			call mul16 ;результат в r16:r17 = CE*10
+			mov ThirByte,VremenPrH ; записываем накрученное значение
+			mov SecByte,VremenPrL 
+
+			sub SecByte,Quant   
+			sbc ThirByte,TmpAsH 
+			
+			MOV Quant,SecByte
+			MOV TmpAsH,ThirByte ;Времен1=Число-(CE*10)-Времен1ПредыдущейИнтерации
+
+			MOV  VremenPrH,TmpAsH	;Времен1 предыдущего получения символа
+			MOV  VremenPrL,Quant
+
+			mov Num4,CE
+			mov CE,FisByte
+			rjmp P1000P4
+P10004:     mov Num4,FisByte
+			mov Quant,VremenPrL
+			mov TmpAsH,VremenPrH
+;
+;
+;Num5
+P1000P4:    subi Quant,low(1)
+			sbci TmpAsH,high(1) ;Времен1=Времен1-1
+			cpi TmpAsH,0
+			BRMI P10005 ; переход по отрицательному значению
+;Сюда смотрим следующие символы
+			cpi Quant,0
+			breq NullSr5   ;переход если 0
+;Cюда если не 0
+WhileKsym5: CPI TmpAsH,0  
+			brlt NullSum5 ;переход ели меньше нуля
+;Cюда для вычилсения номинала символа
+			subi Quant,low(1)
+			sbci TmpAsH,high(1) ;Времен1=Времен1-1
+			inc CE ;CE++
+			rjmp WhileKsym5
+;Cюда для записи полученных значений и подготовки вычисления следующего символа
+NullSr5:	inc CE
+NullSum5:	ldi ThirByte, high(1) ;1
+			ldi SecByte, low(1)
+			mov r1,ThirByte
+			mov r2,SecByte ;записываем множимое
+			
+			mov r5,FisByte ;записываю множитель
+			mov r6,CE
+			call mul16 ;результат в r16:r17 = CE*1
+			mov ThirByte,VremenPrH ; записываем накрученное значение
+			mov SecByte,VremenPrL 
+
+			sub SecByte,Quant    
+			sbc ThirByte,TmpAsH 
+			
+			MOV Quant,SecByte
+			MOV TmpAsH,ThirByte ;Времен1=Число-(CE*1)-Времен1ПредыдущейИнтерации
+
+			MOV  VremenPrH,TmpAsH	;Времен1 предыдущего получения символа
+			MOV  VremenPrL,Quant
+
+			mov Num5,CE
+			mov CE,FisByte
+			rjmp P1000P5
+P10005:     mov Num5,FisByte
+P1000P5:    ;pop r6
+			;pop r5
+			;pop r4
+			;pop r3
+			;pop r2
+			;pop r1
+			ret
+;------------------>>mul16<<---------------------------------
+;Программа умножения двух положительных 16ти разрядных слов.
+;r1 r2  Множимое(Заменить на мои регистры)  от старшего к младшему
+;r5 r6    Множитель
+;r16 r17  Результат (r9 старший)
+
+mul16:	ldi ZL,16 ;количество умножаемых бит
+		clr r16	;очищаем результат
+		clr r17
+Shft16:	lsr r5 ;сдвиг множителя вправо
+		ror r6
+		brcs Sum16 ;переход если был перенос
+;Переноса не было пропускаем суммирование
+	;влево влево множимого
+ShftL16:lsl r2
+		rol r1 ;логический сдвиг влево через перенос
+		dec ZL
+		BRNE Shft16
+; Сюда если прошли все повторения
+		;mov r1,r9  ;запись результата в регистры множимого
+		;mov r2,r10
+		;mov r3,r11
+		;mov r4,r12 ;не переписываем в регистры множимогоч
+		ret  ;выход из процедуры
+Sum16:	add r17,r2
+		adc r16,r1
+		BRCC ShftL16 ;переход если нет переноса
+ExErr16:	SET ;установка флага ошибки
+			RET
+;------------------>>QueEndQue<<-----------------------------
+;Процедура очистки памяти для записи данных процедур
+QueEndQue:	cli
+			ldi OSRG, TS_EndQue
+			call QueProcedur
+			call PrSt
+			ret
+;------------------>>EndQue<<---------------------------
+;Процедура очистки памяти для записи данных процедур
+EndQue:		push Tmp2
+			in Tmp2,SREG ; Сохраняем значение флагов
+			push Tmp2;
+			call ShiftQue
+			ldi ZL,low(TaskQueue)
+			ldi ZH,high(TaskQueue) 
+			ld Tmp2,Z ;берем номер текущей задачи
+			cpi Tmp2,0xFF
+			brne EndQueRET ;переход если не равны
+; Если задач нет перенести указатели в ОЗУ области данных процедур в начало.
+;Тем самым начав запись сверху старых данных
+			ldi ZL, low(MasByte) ; дальше нет процедур пишем данные по новой
+			sts CurrentByteL, ZL
+			sts ReadDatL,ZL 
+			ldi ZH, high(MasByte) 
+			sts CurrentByteH,ZH
+			sts ReadDatH,ZH
+			;
+EndQueRET:  pop Tmp2 ; Возвращаем флаги. Если там прерывание было 
+			out SREG,Tmp2 ; разрешено, то оно вернется в это значение. 
+			pop Tmp2;
+			ret
+;------------------>>QueFreqStep<<------------------------
+;1.Процедура ставит в очередь очистку экрана.
+;2.Ставит в очередь вывод строки "шаг".
+QueFreqStep:	
+;Очистка
+				ldi FisByte, 0
+				ldi SecByte,7
+				call QuePosYkP
+				;
+				ldi FisByte,0
+				ldi SecByte,15
+				call QuePosYkCol
+				;
+				ldi FisByte,128
+				call QueClean
+				;
+				ldi FisByte, 3
+				ldi SecByte,4
+				call QuePosYkP
+				;
+				ldi FisByte,0
+				ldi SecByte,15
+				call QuePosYkCol
+				;
+				ldi FisByte, low(FreqOP*2)
+				ldi SecByte, high(FreqOP*2)
+				call QueTrData
+				ret
+;------------------>>StepVal<<---------------------------
+;Процедура выводит циферки выбранного шага на экранчик
+;Не стирает изображение. 
+StepVal:		ldi FisByte, 3
+				ldi SecByte,4
+				call QuePosYkP
+				;
+				ldi FisByte,4
+				ldi SecByte,15
+				call QuePosYkCol
+				;
+				mov CE,CountEncoder
+				andi CE,0b00011110
+				cpi CE,2
+				BRNE SV2
+;Переходим сюда если шаг 1 кГц
+				ldi FisByte, low(FreqStep1*2)
+				ldi SecByte, high(FreqStep1*2)
+ 
+				jmp SVEND  ;<<-------------
+;
+SV2: 		SBRC CountEncoder,2    ;пропуск следующей команды если бит сброшен
+			RJMP SV3;EnC16 ;переходим для выбора шага в 10Кгц
+			SBRC CountEncoder,3    ;пропуск следующей команды если бит сброшен
+			RJMP SV4 ;Увеличиваем на 100кгц
+;Шаг 500кГц
+			ldi FisByte, low(FreqStep500*2)
+			ldi SecByte, high(FreqStep500*2)
+ 
+			rjmp SVEND
+;ШАГ 10Кгц
+SV3:	ldi FisByte, low(FreqStep10*2)
+		ldi SecByte, high(FreqStep10*2)
+		rjmp SVEND ;<<<-----------------
+;шаг 100кГц
+SV4:	ldi FisByte, low(FreqStep100*2)
+		ldi SecByte, high(FreqStep100*2)
+		;
+SVEND:	call QueTrData
+;
+		ldi FisByte, low(Freq*2)
+		ldi SecByte, high(Freq*2)
+		call QueTrData
+		ret
 ;------------------>>QueStartSig<<------------------------
 ;Постановка в очередь отправки сигнала старт.
 QueStartSig:	cli
@@ -267,6 +697,7 @@ StopSig:	ldi r18,0b10010101
 			DOUT TWCR,r18
 			;После отправки стоп сдвигаю очередь
 			call ShiftQue
+			call InterSPI ; Запускаю передачу
 			ret
 ;------------------>>MenSMode<<------------------------------
 ;Процедура постановки задачи вывода на экран меню выбора
@@ -462,7 +893,7 @@ TD5:	DIN r18, TrDataCountB
 		DOUT TWDR,r18
 		ldi r18,0b10000101 ; Продолжаем передачу
 		DOUT TWCR,r18
-		reti
+		ret
 ;Управляющий байт передали
 TrComp: DIN r18,TrDataCount
 		cpi r18,0 
@@ -481,9 +912,12 @@ TrComp: DIN r18,TrDataCount
 		call ShiftQue ; Сдвигаю очередь т.к. нашли окончание массива символов
 		ldi r18,0b10100101
 		DOUT TWCR,r18
-		reti
+		ret
+TrMasComp: jmp TrMasComp1
 ;
-TrDataCalc: DOUT TrDatLow,ZL
+TrDataCalc: cpi r18,0xE0
+			brlo TrDatCalcSpace ; переход если меньше
+			DOUT TrDatLow,ZL
 			DOUT TrDatHi,ZH
 			;Вычисляю адрес нового символа
 			SUBI r18,0xE0 ; вычитанием из кода символа получаем относительное смещение относительно начала массива байт
@@ -499,8 +933,35 @@ TrDataCalc: DOUT TrDatLow,ZL
 			DOUT TrSymByteL, ZL
 			DOUT TrSymByteH,ZH
 			RJMP TrMasBat
+;Сюда переходим для проверки не пробел ли?
+TrDatCalcSpace: cpi r18,0x20
+				brne TrDatNumCal ;если не равны переход
+				DOUT TrDatLow,ZL
+				DOUT TrDatHi,ZH
+				LDI ZL,low(space*2)  ;адрес нулевого массива байт символа соответствует пробелу
+				LDI ZH,high(space*2)
+				DOUT TrSymByteL, ZL
+				DOUT TrSymByteH,ZH
+				RJMP TrMasBat
+;Cюда переходим для передачи байт цифры на экран
+TrDatNumCal:  DOUT TrDatLow,ZL
+			  DOUT TrDatHi,ZH
+;Вычисляю адрес новго символа
+			  SUBI r18,0x30 ; вычитанием из кода симола получаем относительное смещение относительно начала массива байт цифр
+			  lsl r18
+              lsl r18
+              lsl r18 ;сдвиг влево на 3 разряда равносильно умножению на 8
+			  LDI ZL,low(N0*2)  ;адрес нулевого массива байт символа соответствует букве а
+			  LDI ZH,high(N0*2)
+			  add ZL,r18       ;складываю и устанавливаю бит береноса
+			  ldi r18,0
+			  adc ZH,r18  ;складываю с битом переноса если есть
+;Теперь Z содержит адрес байта для вывода.
+			  DOUT TrSymByteL, ZL
+			  DOUT TrSymByteH,ZH
+			  RJMP TrMasBat
 ;Сравниваю ни конец ли массива символов
-TrMasComp:	cpi r18,8
+TrMasComp1:	cpi r18,8
 			BRGE EndTrData		;если конец массива байт обозначабщих символ
 ;cюда переходим для передачи массива байт символов
 TrMasBat:	DIN r18,TrDataCount
@@ -514,7 +975,7 @@ TrMasBat:	DIN r18,TrDataCount
 			DOUT TWDR,r18
 			ldi r18,0b10000101 ; продолжаем передачу
 			DOUT TWCR,r18
-			reti
+			ret
 EndTrData:  ldi r18,0
 			DOUT TrDataCount,r18
 			call InterSPI
@@ -557,8 +1018,94 @@ FrTr1: pop Tmp2 ; Возвращаем флаги. Если там прерывание было
 	   out SREG,Tmp2 ; разрешено, то оно вернется в это значение.
 	   pop Tmp2;
 	   ret
+;---------------->>>>>TrDataReg<<<<---------------------------
+;TrDataCountB		флаг того что нужно передать управляющий байт (При инициализации передачи массива символов)
+;TrDataCount		количество байт одного символа которые уже передали
+;2 ячейки обнуляю при стартовой инициализации программы
 
-;---------------------->>>>StartTrData<<<<------------- Процедура подготовки данных
+;TrSymByteL:		указатель на массив передаваемого байта одного символа из массива TrDat (Текущего)
+;TrSymByteH:		указатель на
+
+
+;Процедура принимающая на вход массив байт для вывода. 0 признак онончания массива.
+TrDataReg:	DIN r18, TrDataCountB
+			cpi r18,0 
+			BRNE TrCompReg ;   если не равно переход(уже передавали управляющий байт)
+;cюда переходим для передачи управляющего байта
+		ldi r18,1
+		DOUT TrDataCountB,r18
+		ldi r18,0x40 ;устанавливаем управляющий байт, символизирующий о сплошном массиве байт
+		DOUT TWDR,r18
+		ldi r18,0b10000101 ; Продолжаем передачу
+		DOUT TWCR,r18
+		ret
+;Управляющий байт передали
+TrCompReg:	DIN r18,TrDataCount
+			cpi r18,0 
+			BRNE TrMasCompReg ; Проверка не конец ли передачи массива байт
+;Берем следующий символ для вывода
+		DIN R18,TrDataCal ;в r18 количество переданных символов
+		cpi r18,5
+		BRNE TrDataCalcReg ; переходим для вычисления массива байт символа
+;Отключаю флаги формирую состояние повстарт
+		ldi r18,0
+		DOUT TrDataCountB,r18
+		DOUT TrDataCount,r18
+		DOUT TrDataCal,r18
+		call ShiftQue ; Сдвигаю очередь т.к. нашли окончание массива символов
+		ldi r18,0b10100101
+		DOUT TWCR,r18
+		ret
+;
+TrDataCalcReg: ;Вычисляю смещение относительно начала массива символов
+				mov Quant,r18
+				subi Quant,(-9) ; по адресу 8 регистр r9?? Проверить
+				mov ZL, Quant  ; Адрес регистра
+				CLR	ZH	; А тут у нас будет ноль
+;получаем цифру из регистра
+				ld Quant, Z ;В Quant цифра
+				lsl Quant
+				lsl Quant
+				lsl Quant ;сдвиг влево на 3 разряда равносильно умножению на 8
+				LDI ZL,low(N0*2)  ;адрес нулевого массива байт символа соответствует цифре 0
+				LDI ZH,high(N0*2)
+				add ZL,Quant       ;складываю и устанавливаю бит переноса
+				ldi Quant,0
+				adc ZH,Quant  ;складываю с битом переноса если есть
+;Теперь Z содержит адрес байта для вывода.
+				DOUT TrSymByteL, ZL
+				DOUT TrSymByteH,ZH
+				inc r18
+				DOUT TrDataCal,r18
+				RJMP TrMasBatReg
+;Сравниваю ни конец ли массива символов
+TrMasCompReg:	cpi r18,8
+				BRGE EndTrDataReg		;если конец массива байт обозначабщих символ
+;cюда переходим для передачи массива байт символов
+TrMasBatReg:	DIN r18,TrDataCount
+				inc r18
+				DOUT TrDataCount,r18
+				DIN ZL,TrSymByteL
+				DIN ZH, TrSymByteH
+				LPM R18, Z+ ;беру байт по вычисленному адресу 
+				DOUT TrSymByteL,ZL
+				DOUT TrSymByteH,ZH
+				DOUT TWDR,r18
+				ldi r18,0b10000101 ; продолжаем передачу
+				DOUT TWCR,r18
+				ret
+EndTrDataReg:	ldi r18,0
+				DOUT TrDataCount,r18
+				call InterSPI
+				ret
+;---------------------->>>>QueTrDataReg<<<<--------------
+;Процедура добавления в очередь вывода цифр из регистров
+QueTrDataReg: ldi OSRG, TS_TrDataReg ; Добавляю задачу в очередь
+			  call QueProcedur
+			  call PrSt
+			  ret
+;---------------------->>>>StartTrData<<<<-------------
+; Процедура подготовки данных
 StartTrData : ldi r18,0
 			  DOUT TrDataCountB,r18	;флаг того что нужно передать управляющий байт (При инициализации передачи массива символов)
 			  DOUT TrDataCount,r18	;количество байт одного символа которые уже передали
@@ -602,7 +1149,7 @@ PosYkP:	   DIN r18,NumWhilePos
 		   DOUT CountPosYk,Quant
 		   ldi Quant, 0b10100101 ;формирую состояние повстарт
 		   DOUT TWCR,Quant
-		   reti
+		   ret
 CountContr:	cpi Quant,1
 		    BRNE CounComand ;<Переходим для передачи непосредственно команды
 ;Cюда перешли для передачи управляющего байта
@@ -612,7 +1159,7 @@ CountContr:	cpi Quant,1
 			DOUT TWDR,Quant ; передаем управляющий байт
 			ldi Quant,0b10000101
 			DOUT TWCR,Quant ;Продолжаем передачу
-			reti
+			ret
 ;Cюда переходим для передачи команды
 CounComand: ldi Quant,0
 			DOUT CountPosYk,Quant
@@ -628,7 +1175,7 @@ CounComand: ldi Quant,0
 			DOUT TWDR,r18
 			ldi r18,0b10000101 ; Продолжаем передачу
 			DOUT TWCR,r18
-			reti
+			ret
 ;Cюда переходим для отправки оставшихся байт команды
 CouComCon: DIN ZL, ReadDatL ;берем из массива данные которые будем писать
 		   DIN ZH, ReadDatH
@@ -638,7 +1185,7 @@ CouComCon: DIN ZL, ReadDatL ;берем из массива данные которые будем писать
 		   DOUT ReadDatL,ZL
 		   ldi r18,0b10000101 ; Продолжаем передачу
 		   DOUT TWCR,r18 ;Формирую состояние повстарт
-		   reti
+		   ret
 ;Передали все данные тепрь главное выйти отсюда
 EndTrCom:	ldi r18,0
 			DOUT NumWhilePos,r18
@@ -647,7 +1194,7 @@ EndTrCom:	ldi r18,0
 			call ShiftQue
 			LDI r18,0b10100101
 			DOUT TWCR,r18 ;Формирую состояние повстарт
-			reti
+			ret
 
 ;----------------->>>QuePosYkCol<<--------------------------------------
 ;Процедура постановки в очередь процедуры позиционрирования столбца экрана
@@ -680,7 +1227,7 @@ PosYkCol:  DIN r18,NumWhilePos
 				DOUT CountPosYk,TmpAsH
 				ldi TmpAsH, 0b10100101 ;формирую состояние повстарт
 				DOUT TWCR,TmpAsH
-				reti
+				ret
 CountContr1:	cpi TmpAsH,1
 				BRNE CounComand1 ;<Переходим для передачи непосредственно команды
 ;Cюда перешли для передачи управляющего байта
@@ -690,7 +1237,7 @@ CountContr1:	cpi TmpAsH,1
 				DOUT TWDR,TmpAsH ; передаем управляющий байт
 				ldi TmpAsH,0b10000101
 				DOUT TWCR,TmpAsH ;Продолжаем передачу
-				reti
+				ret
 				Jmp CounComand1
 EndTrCom12:		RJMP EndTrCom1
 ;Cюда переходим для передачи команды
@@ -708,7 +1255,7 @@ CounComand1:	ldi TmpAsH,0
 			DOUT TWDR,r18
 			ldi r18,0b10000101 ; Продолжаем передачу
 			DOUT TWCR,r18
-			reti
+			ret
 ;Cюда переходим для отправки оставшихся байт команды
 CouComCon1:		DIN ZL, ReadDatL ;берем из массива данные которые будем писать
 				DIN ZH, ReadDatH
@@ -725,7 +1272,7 @@ CouComCon1:		DIN ZL, ReadDatL ;берем из массива данные которые будем писать
 TrComDat1:		DOUT TWDR,OSRG
 				ldi r18,0b10000101
 				DOUT TWCR,r18 ; Продолжаем передачу
-				reti
+				ret
 ;Передали все данные тепрь главное выйти отсюда
 EndTrCom1:		ldi r18,0
 				DOUT NumWhilePos,r18
@@ -734,7 +1281,7 @@ EndTrCom1:		ldi r18,0
 				call ShiftQue
 				LDI r18,0b10100101
 				DOUT TWCR,r18 ;Формирую состояние повстарт
-				reti
+				ret
 ;------------------>>>QueClean<<<------------------------
 ;Процедура постановки в очередь очистки дисплея.
 ;Перед вызовом в FisByte записываю количество очищаемых символов.
@@ -855,7 +1402,7 @@ TD15:	DIN r18, TrDataCountB
 		DOUT TWDR,r18
 		ldi r18,0b10000101 ; Продолжаем передачу
 		DOUT TWCR,r18
-		reti
+		ret
 TrComp1:	DIN Quant,TrDataCount
 			cpi Quant,8
 			BRGE EndTrData1		;если конец массива байт обозначабщих символ
@@ -871,7 +1418,7 @@ TrComp1:	DIN Quant,TrDataCount
 		ldi r18,0b10000101 ; продолжаем передачу
 		DOUT TWCR,r18
 		;call InterSPI ;вызывается сама после окончания передачи
-		reti
+		ret
 EndTrData1: 	ldi r18,0
 				DOUT TrDataCountB,r18
 				DOUT TrDataCount,r18
@@ -879,7 +1426,7 @@ EndTrData1: 	ldi r18,0
 				call ShiftQue
 				ldi r18,0b10100101
 				DOUT TWCR,r18 ; формирую состояние повстарт
-				reti
+				ret
 
 ;-------------------->>InitPoInfPro<<----------------------
 ;Процедура записи начальных значений в массив данных используемых при выводе указателя
@@ -953,7 +1500,7 @@ WordTr: DIN r20, SREG
 		pop OSRG
 		DOUT SREG,OSRG ; восстанавливаю статусный регистр. Если прерывания были 
 		sei
-		ret				;разрешены оны включатся
+		reti				;разрешены оны включатся
 
 ;Переходим сюда если передали уже слово
 EndWordTr:	ldi Tmp2,0
@@ -984,7 +1531,7 @@ SEQL01:		ld Tmp2, Z+			; Грузим в темп байт из очереди
 			pop Tmp2
 			pop ZH
 			pop ZL
-			reti
+			ret   ;<<<-----Сомнения
 ;------------------------->>>ShiftQue<<<--------------------------------
 ;Процедура сдвига очереди (Очередь в оперативе)
 ShiftQue:	cli 
@@ -1068,7 +1615,11 @@ EndTWordTr:	ldi Tmp2,0
 ;
 ;----------------------->>>>>PointCheck<<<<------------------------------------------
 ;Процедура вывода указателя
-PointCheck:		sbrs CountEncoder,1 ;пропуск следующей команды если бит установлен
+PointCheck:		push FsMM
+				push FsML
+				push FsLM
+				push FsLL
+				sbrs CountEncoder,1 ;пропуск следующей команды если бит установлен
 				rjmp PCh1
 ;Cюда перешли если выбран синусоидальный сигнал
 			ldi FsMM,2   ;стартовая строка
@@ -1076,7 +1627,7 @@ PointCheck:		sbrs CountEncoder,1 ;пропуск следующей команды если бит установлен
 			ldi FsLM,0   ;стартовый столбец
 			ldi FsLL, 15 ;конечный столбец
 			call PoInfPro ;процедура вывода указателя
-			ret
+			rjmp Jump3
 PCh1:		sbrs CountEncoder,2 ;пропуск следующей команды если бит установлен
 			rjmp PCh2
 ;Cюда если выбран трехугольный сигнал
@@ -1085,7 +1636,7 @@ PCh1:		sbrs CountEncoder,2 ;пропуск следующей команды если бит установлен
 			ldi FsLM,0   ;стартовый столбец
 			ldi FsLL, 15 ;конечный столбец
 			call PoInfPro
-			ret
+			rjmp Jump3
 PCh2:		sbrs CountEncoder,3
 			rjmp PCh3
 ;Сюда если вывод старшего пита DAC
@@ -1094,13 +1645,17 @@ PCh2:		sbrs CountEncoder,3
 			ldi FsLM,0  ; стартовый столбец
 			ldi FsLL, 15; конечный столбец
 		    call PoInfPro
-			ret
+			rjmp Jump3
 ;Cюда если старший бит DAC/2
 PCh3:		ldi FsMM,5  ;стартовая строка
 			ldi FsML,6 ;конечная
 			ldi FsLM,0 ;стартовый столбец
 			ldi FsLL, 15 ;конечный столбец
 			call PoInfPro
+Jump3:      pop FsLL
+			pop FsLM
+			pop FsML
+			pop FsMM
 			ret
 ;----------------------->>>>>OpMode<<<<------------------------------------------
 ;Процедура установки режима работы модуля AD9833
@@ -1308,12 +1863,16 @@ Encoder:		cli
 				ldi Quant,1
 				EOR CountEncoder,Quant
 ;Тут прорисовываем лампочки, перерисовываю меню
-				sbi PORTC,0 ;установка бита
-				sbrs CountEncoder,0 ;пропуск следующей если бит установлен
-				cbi PORTC,0 ;сброс бита
+				;sbi PORTC,0 ;установка бита
+				;sbrs CountEncoder,0 ;пропуск следующей если бит установлен
+				;cbi PORTC,0 ;сброс бита
 				
 				;out PORTC,CountEncoder ;<<<<---------------Внимание
 ;Дальше записываю в очередность процедур продедуры вывода на экран данных 
+				push FsMM
+				push FsML
+				push FsLM
+				push FsLL
 				mov Quant,CountEncoder
 				andi Quant,1 
 				cpi Quant,0 
@@ -1333,11 +1892,16 @@ SFren:			ldi  FsMM,5 ;стартовая строка
 PPoint:			call QueStartSig  ;Отправка сигнала старт
 				call PoInfPro ;Вывод указателя пункта меню
 				call QueStopSig ; Отправка сигнала стоп после передачи
+				pop FsLL
+				pop FsLM
+				pop FsML
+				pop FsMM
 				reti ;Разрешены ли здесь прерывания?? Стоит ли запрещать?
 
 ;Cюда перешли если было нажатие на энкодер
-EnC1:			cpi CE,0x20
-				BRNE EnC2
+EnC1:			;cpi CE,0x20
+				sbrs CE,5 ;пропуск следующей команды если бит установлен
+				jmp EnC2
 ;Cюда перешли по первому нажатию
 				mov CE,CountEncoder
 				andi CE,0b00011110
@@ -1374,9 +1938,11 @@ EnC7:			LSL CE
 ;---->>> Здесь перерисовываем меню, выводим значения<<<<------
 ;ПОСЛЕ НАЖАТИЯ НЕ ВЫХОДИТЬ В НАЧАЛО. А передать настройки, и ждать
 ;Выход в предыдущее меню по длительному нажатию
+				call QueEndQue
 				call QueStartSig
 				call PointCheck
 				call QueStopSig
+				call FrTr
 				;out PORTC,CountEncoder
 				reti ; Или Ret что с флагом по переходу сюда?
 
@@ -1406,8 +1972,11 @@ EnC12:          ldi CE,1
 EnC11:	LSL CE
 		andi CountEncoder,0b11100001
 		OR CountEncoder,CE ;устанавливаем новое значение
-; Добавить необходимые функции вывода <<<----------------------------
-		out PORTC,CountEncoder
+; Добавить необходимые функции вывода изображения <<<------
+		call QueEndQue ;проверяем пуста ли очередь чтоб избавится от переполнения
+		call QueStartSig
+		call StepVal
+		call QueStopSig
 		reti ; ret или 	reti??	
 ;Сюда перестаем входить только после следующего нажатия
 
@@ -1464,7 +2033,13 @@ EnC15:	mov FisByte,NumFrH
 EnC51: 	mov FisByte,NumFrH
 		cpi FisByte,0
 	   brlt EnC52 ;переход если меньше
-EnC55: ldi FisByte,0
+EnC55: call GetSym ;получаю коды символов
+	   call QueEndQue; Ставлю в очередь очистку
+	   call QueStartSig ;Отправляю сигнал старт
+	   call MainFreqTOP
+	   call QueStopSig
+
+	   ldi FisByte,0
 ;Запись множимого
 		mov Mn1,FisByte
 		mov Mn2,FisByte
@@ -1560,11 +2135,12 @@ EnC60:	ldi FisByte,0x64
 		clr SecByte
 		sub NumFrL,FisByte
 		sbc NumFrH,SecByte
+		jmp EnC15
 ;Cюда зашли если было третье нажатие
-EnC13:  ldi CE,0
-		ldi CountEncoder,0
+EnC13:  ;ldi CE,0
+		;ldi CountEncoder,0
 ;------->>Здесь вывести все что надо <<----------------
-		out PORTC,CountEncoder
+		;out PORTC,CountEncoder
 		reti ;Прерывания надо восстановить
 ; -------------------------->>PresEn<<<---------------------------------
 ;Обработчик нажатия кнопки <<<<<---------------------
@@ -1584,10 +2160,26 @@ PresEn:   call Conf_Time0
 		  rjmp PE42
 
 PE41:	  ldi CE,0
-PE42:	  cpi CE,2
-		  brlt PE1 ;переход если меньше
+PE42:	  cpi CE,0
+		  brne PE64
+;Cюда если CE,0
+		call QueStartSig
+		  ldi FisByte,0
+		ldi SecByte,6
+		call QuePosYkP ;установка строки
+		ldi FisByte,0
+		ldi SecByte,15
+		call QuePosYkCol ;установка символа
+		ldi FisByte,112  ;--<< ЗДЕСЬ ВЕРНО??!
+		call QueClean
+		call MainMenu
+		call QueStopSig
+		ldi CountEncoder,0
+		reti
+PE64:	  cpi CE,1
+		  breq PE1 ;переход если равно 1
 		  cpi CE,3
-		  breq PE2
+		  brge PE2
 ;Cюда переходим если второе нажатие
 		  SBRC CountEncoder,0; пропуск следующей команды если бит сброшен
 		  rjmp PE3
@@ -1598,13 +2190,19 @@ PE42:	  cpi CE,2
 		  OR CountEncoder,CE
 		  call Encoder
 		  reti
-;Cюда переходим если было третье нажатие 
-PE2:	swap CE
+;Cюда переходим если было третье нажатие >=3
+PE2:	 SBRC CountEncoder,0; пропуск следующей команды если бит сброшен
+		 rjmp PE58
+;3е нажатие в меню установки частоты
+		ldi CE,0
+		swap CE
 		lsl CE
 		andi CountEncoder,0b10011111 ;По третьему нажатию переходим в основное меню
 		OR CountEncoder,CE
-		call Encoder
+		call PresEn
 		reti
+PE58:   call OpMode
+		call Encoder
 ;Cюда переходим по первому нажатию
 PE1:	swap CE
 		lsl CE
@@ -1613,15 +2211,30 @@ PE1:	swap CE
 		OR CountEncoder,CE
 		ldi FisByte,0xFF
 		DOUT PosMemStr,FisByte ; Указываю о сбросе положения указателя
+		call QueEndQue
 		call QueStartSig ;Отправляю сигнал старт
-		call MenSMode ;Прорисовую меню
+		SBRC CountEncoder,0; пропуск следующей команды если бит сброшен
+		rjmp PE222
+;Cюда если выбор шага изменения
+		call QueFreqStep
+		call MainFreqTOP
+		call QueStopSig
+		reti
+;Cюда если нажатие выбора типа сигнала
+PE222:  call MenSMode ;Прорисовую меню
+		call MainFreqTOP
 		call QueStopSig ;Постановка в очередь отправка сигнала стоп
 		;call Encoder  ;<<<<-------------------- ИЗМЕНИЛ И ЗАРАБОТАЛО
 		reti
 ;Нажатие сделали в меню выбора режима
 PE3: call OpMode ; Передаем команду соответствующую выбранному режиму
-	 ldi CountEncoder,0
-	 ldi CE,0
+	 ;ldi CountEncoder,0
+	 ;ldi CE,0
+	 dec CE
+	SWAP CE
+	LSL CE
+	andi CountEncoder,0b10011111
+	OR CountEncoder,CE
 	 ;Отсылаю байты конфигурации
 	 call Encoder
 	 reti
@@ -1700,6 +2313,7 @@ P0x10 :		pop r20
 			reti
 ;=============================================================
 ;0x00 окончание строки
+space: .db 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 		  S0: .db 0x03,0x0E,0x3C,0x64,0x34,0x1E,0x07,0x00			;а
 		  S1: .db 0x41,0x7F,0x49,0x49,0x49,0x66,0x00,0x00			;б
 		  S2: .db 0x41,0x7F,0x49,0x49,0x49,0x36,0x00,0x00			;в
@@ -1709,8 +2323,8 @@ P0x10 :		pop r20
 		  S6:								;ж
 .org S6+4 S7:								;з
 .org S7+4 S8: .db 0x7F,0x03,0x07,0x18,0x30,0x7F,0x00,0x00			;и
-.org S8+4 S9:								;й
-.org S9+4 S10:								;к
+		  S9: .db 0x7F,0x03,0x8E,0x98,0x30,0x7F,0x00,0x00			;й
+.org S9+4 S10:  .db 0x41,0x7F,0x1C,0x36,0x63,0x41,0x00,0x00			;к
 .org S10+4 S11:	.db 0x01,0x41,0x7E,0x40,0x40,0x7F,0x40,0x00			;л
 .org S11+4 S12:								;м
 .org S12+4 S13: .db 0x41,0x7F,0x49,0x08,0x49,0x7F,0x41,0x00			;н
@@ -1719,22 +2333,34 @@ P0x10 :		pop r20
 		   S16:	.db 0x41,0x7F,0x49,0x48,0x48,0x30,0x00,0x00			;р
 		   S17:	.db 0x1C,0x22,0x43,0x81,0x81,0x22,0x00,0x00			;с
 .org S17+4 S18: .db 0x40,0x40,0x40,0x7F,0x40,0x40,0x40,0x00			;т
-		   S19:								;у
+		   S19:	.db 0x40,0x61,0x33,0x1E,0x0C,0x78,0x60,0x00			;у
 .org S19+4 S20:								;ф
 .org S20+4 S21:								;х
-.org S21+4 S22:								;ц
+.org S21+4 S22:	.db 0x40,0x7E,0x02,0x02,0x02,0x7E,0x43,0x00			;ц
 .org S22+4 S23: .db 0x40,0x78,0x08,0x08,0x08,0x7F,0x41,0x00			;ч
-.org S23+4 S24:								;ш
+		   S24:	.db 0x7F,0x01,0x01,0x7F,0x01,0x01,0x7F,0x00			;ш
 .org S24+4 S25:								;щ
 .org S25+4 S26:								;ъ
 .org S26+4 S27: .db 0x7F,0x11,0x11,0x1F,0x00,0x7F,0x00,0x00			;ы
-		   S28:								;ь
+		   S28:	.db 0x00,0x7F,0x1B,0x11,0x1B,0x0E,0x00,0x00			;ь
 .org S28+4 S29:								;э
 .org S29+4 S30:								;ю
 .org S30+4 S31: .db 0x00,0x01,0x71,0x4E,0x48,0x7F,0x41,0x00			;я
 ;
 .org S31+4 S32:								;ж
 .org S32+4 point: .db 0x00,0x7F,0x7F,0x7F,0x3E,0x1C,0x08,0x00       ;байты указателя(стрелочки)
+;=================Цифры===================================
+N0:	.db 0x1C,0x36,0x63,0x41,0x63,0x36,0x1C,0x00 ;0
+N1: .db 0x00,0x10,0x31,0x7F,0x7F,0x01,0x00,0x00	;1
+N2: .db 0x00,0x63,0x67,0x4F,0x79,0x33,0x00,0x00 ;2
+N3:	.db 0x00,0x41,0x49,0x49,0x36,0x00,0x00,0x00 ;3
+N4: .db 0x0C,0x1C,0x34,0x64,0x7F,0x04,0x00,0x00 ;4
+N5: .db 0x00,0x73,0x71,0x5B,0x5F,0x4E,0x00,0x00 ;5
+N6: .db 0x00,0x3E,0x7F,0x49,0x6F,0x66,0x00,0x00 ;6
+N7: .db 0x00,0x60,0x67,0x4F,0x58,0x70,0x00,0x00 ;7
+N8: .db 0x00,0x36,0x7F,0x49,0x49,0x7F,0x36,0x00 ;8
+N9: .db 0x00,0x30,0x79,0x49,0x4B,0x7E,0x3E,0x00 ;9
+
 
 ;128x32
 ;Программатор
