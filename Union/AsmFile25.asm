@@ -6,9 +6,6 @@
  * Модуль передачи байт на микросхему AD9833
  *  Created: 10.07.2021 14:45:18
  *   Author: dima
- После поворота энкодера начинается лаг
- Чтение непонятно по какому адресу из ОЗУ. Где хранится адрес начала массива данных
- Почему указатель указывает туда?
  */ 
 .include "F:/AVR/7.0/packs/atmel/ATmega_DFP/1.6.364/avrasm/inc/m328Pdef.inc"
 .include "E:/A/AssemblerApplication1/AssemblerApplication1/Macro.inc"
