@@ -32,7 +32,7 @@ extern unsigned char DataQueue[200];
 extern unsigned char PoinQueRed;
 
 extern unsigned char MasPosYk[40];  //Выделил 40 байт в оперативе для хранения
-//Данных позиционирования указателя
+//данных позиционирования указателя
 extern unsigned char CountMasWr; //Текущая позиция для записи в массив позиционирования
 
 const char Num[][8] PROGMEM = { //Здесь байты символов.
@@ -60,7 +60,7 @@ const char Symbol[][8] PROGMEM = { //Здесь байты символов
 	{0x7F,0x03,0x8E,0x98,0x30,0x7F,0x00,0x00}, //й
 	{0x41,0x7F,0x1C,0x36,0x63,0x41,0x00,0x00}, //к
 	{0x01,0x41,0x7E,0x40,0x40,0x7F,0x40,0x00}, //л
-	{0,0,0,0,0,0,0,0},//м
+	{0x7F,0x40,0x20,0x10,0x20,0x40,0x7F,0x00},//м
 	{0x41,0x7F,0x49,0x08,0x49,0x7F,0x41,0x00},//н
 	{0x1C,0x22,0x41,0x41,0x41,0x22,0x1C,0x00},//о
 	{0x41,0x7F,0x41,0x40,0x41,0x7F,0x41,0x00},//п
@@ -331,4 +331,38 @@ char OutPMem(){
 	Adr =  ((int)Adr) | (((int)DataQueue[PoinQueRed+1]) & 0b0000000011111111);
 	TrByte(pgm_read_byte(&Adr[CountMasInit++])) ; //Отправка байт инициализации
 	return 1;
+}
+
+//Вывод на экран числа.
+//1. Из памяти данных получаем число
+//2. По этому числу выводим на экран символы из памяти программ
+//1 если передача не закончена
+char PrintNum(){
+	unsigned char symbol;
+	if(CountMasInit==0){ //Эта переменная равна 0 если управляющий байт еще не передали
+		TrByte(0x40);// Управляющий байт указывает микросхеме SSD1306 что дальше сплошной массив байт.
+		CountMasInit++;
+		return 1; //передача еще не закончена
+	}
+	else{
+		if(CountMasInit<6){
+			if(CountTWISym<8){ //Продолжаем вывод символа на экран
+					symbol = DataQueue[PoinQueRed+(5-CountMasInit)];
+					TrByte(pgm_read_byte(&Num[symbol][CountTWISym])); // передается один байт символа
+					CountTWISym++;
+					return 1;
+					}
+			else{
+				CountTWISym=0;
+				CountMasInit++;
+				return 1;
+			}
+		}
+		else {
+			CountMasInit=0;
+			CountTWISym=0;
+			PoinQueRed +=5;
+			return 0 ;
+		}
+	}
 }

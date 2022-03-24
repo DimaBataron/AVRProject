@@ -5,3 +5,4 @@ Dima
 
 */
 void ConfTime0();
+void TimeOff();

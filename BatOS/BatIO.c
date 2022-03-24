@@ -18,6 +18,7 @@
 #include <avr/io.h> //Описание всех регистров и портов контроллера
 //#include <stdarg.h> //макросы для работы с переменным числом параметров
 //передаваемых в функцию.
+//#include "Encoder.h"
 
 #define TrMasByte 0 //[0]   передача массива байт
 #define SetLine	  1 //[1]   позиционирование строки
@@ -26,7 +27,7 @@
 #define SSDInit   4 //[4]   процедура постановки в очередь отправки массива байт инициализации экрана
 #define CleanSSD  5 //[5]   процедура очистки экрана
 #define OutPMem   6 //[6]	процедура вывода байта из памяти программ
-//#define 
+#define PrintNum  7 //[7]   процедура вывода числа
 
 
 //Нужно ли ограничивать область видимости для данных и процедур?
@@ -42,7 +43,10 @@ char PoinProcRed=0; // указатель на массив текущей процедуры для чтения
 unsigned char PoinQue=0;  //Указатель на МАССИВ ДАННЫХ процедур для записи
 unsigned char PoinQueRed=0; //Указатель на массив данных для чтения
 
-extern const char Point[]; // так можно?
+static char OldStr=0;
+static char OldCol=0;
+
+extern const char Point[]; // этот массив определен в другом файле в PROGMEM
 
 //Какие процедуры по вводу выводу нужны оси?
 //1. Вывод символа (ПОСИМВОЛЬНЫЙ ВЫВОД)(Может в будущем добавить векторные шрифты?)
@@ -55,28 +59,32 @@ extern const char Point[]; // так можно?
 //Процедура использует переменное число параметров(ВНИМАНИЕ не проверяет их корректность)
 //Процедура форматированного выводы
 //Вывод символа, Вывод цифры, вывод строки
-char BPrintf(char Mod, char *MasOut, char Str, char Col){
-	QueuingLine(Str);//в очередь позиционирование строки
-	QueuingColon(Col);// поставить в очередь позиционирование столбца
+char BPrintf(char Mod,char *MasOut , char Str, char Col){  // char *MasOut 
 		 // Процедура постановки в очередь вывода массива.
 	if(Mod=='s'){ 
+		QueuingLine(Str);//в очередь позиционирование строки
+		QueuingColon(Col);// поставить в очередь позиционирование столбца
 		QueuingStr(MasOut); // вывод строки 
 		return 1; //1 значит успешно
 	}
 	if(Mod=='c'){//Вывод символа. В случае вывода одного символа сохраняет код символа в массиве данных процедур
 		//DataQueue
+		QueuingLine(Str);//в очередь позиционирование строки
+		QueuingColon(Col);// поставить в очередь позиционирование столбца
 		QueuingSym((char)MasOut); //проверить что я тут напреобразовывался))
 		return 1; //1 значит успешно
 	}
 	if(Mod=='p'){//вывод указателя
-		QueuingOutPM(Point); // адрес массива
+		QueuingOutPM(Point,Str,Col); // адрес массива также запоминает старое положение указателя для очистки
 		return 1;
 	}
-	//Окончание блока вывода символа
-	//if(ReadSym=='d'){//вывод числа
-		//получение цифр числа и постановка очереди вывода символов.
-		//return 1;
-	//}// конец вывода числа
+	if(Mod=='d'){ //вывод числа максимальное число 5знаков.
+		QueuingLine(Str);//в очередь позиционирование строки
+		QueuingColon(Col);// поставить в очередь позиционирование столбца
+		QueuingPrintNum(MasOut);
+		return 1;
+	}
+	// Добавить вывод одного символа из памяти программ
 	return 0; // что то пошло не так
 }
 
@@ -111,7 +119,7 @@ void QueuingLine(char Nstr){
 void QueuingColon(char Ncol){
 	 QueueProc[PoinProc++]= SetColomn; // запись процедуры в очередь
 	 QueueProc[PoinProc] = 0xFF;        //Признак конца очереди
-	 MasPosYk[CountMasWr++] = Ncol;    // начальная строка для записи
+	 MasPosYk[CountMasWr++] = Ncol;    // начальный столбец для записи
 	 MasPosYk[CountMasWr++] = 15;      // Конечная строка может быть 7 вместо 0??
 }
 
@@ -123,17 +131,40 @@ void  QueuingSSDInit(){
 
 //Процедура постановки в очередь очистки экрана
 void QueuingCleanSSD(unsigned char CountSymb){
+	//QueuingLine(0);//перед очисткой ставлю указатель в начало
+	//QueuingStr(0);
 	QueueProc[PoinProc++]= CleanSSD; // Номер процедуры в очередь
 	QueueProc[PoinProc]= 0xFF;		// признак конца очереди
 	DataQueue[PoinQue++] = CountSymb; // количество очищаемых символов в массив данных
 }
 
-//Процедура постановки вывода байта из памяти программ
-void QueuingOutPM(char *ProgMemor){
+//Процедура постановки вывода байта из памяти программ очищает положение старого байта. Добавить вывод одного
+//символа
+void QueuingOutPM(char *ProgMemor, char Str, char Col){
+	QueuingLine(OldStr); // Постановка в очередь очистки 
+	QueuingColon(OldCol);
+	QueuingCleanSSD(1); 
+	QueuingLine(Str); // Постановка в очередь вывода
+	QueuingColon(Col);
+	OldStr = Str;
+	OldCol = Col;
 	QueueProc[PoinProc++]= OutPMem; // // Номер процедуры в очередь
 	QueueProc[PoinProc]= 0xFF;		// признак конца очереди
 	DataQueue[PoinQue++] =(char)((int)ProgMemor >> 8); //Запись старших байт адреса
 	DataQueue[PoinQue++] =(char)ProgMemor; // запись младших байт
+}
+//Процедура постановки в очередь вывода числа
+void QueuingPrintNum(char *MasOut){// MasOut это число unsignet int.
+// т.е. от 0 до 65535 запишем туда 12345 (и получим цифры в отдельности)
+//В порядке возрастания(от младшего разряда к старшему)
+	 unsigned int Num = MasOut; // Запоминаем число
+	 unsigned char i=0;
+	 QueueProc[PoinProc++] = PrintNum;
+	 QueueProc[PoinProc] = 0xFF;
+	 for(i=0; i<5; i++){ // получаем сисволы числа
+		  DataQueue[PoinQue++] = (char)(Num%10);
+		  Num = Num/10;
+	 }
 }
 
 // Процедура стартовой настройки модуля TWI для работы с экраном SSD1306
@@ -141,10 +172,11 @@ void StartTWISSD1306(){
 //скорости I2C 400кГц SSD1306 должен поддерживать. 
 //210kHz TWBR=30. TWPS=0;
 	ConTWIPort(); //Настройка ног на вывод сигнала TWI
-	ConfTime0(); // запускаю таймер на работу по переполнению таймера счетчика
-	TWBR = 30; // 210kHz 
+	//ConfTime0(); // запускаю таймер на работу по переполнению таймера счетчика
+	TWBR = 30;//10=444кГц //30= 210kHz 
 	QueuingSSDInit(); // постановка в очередь отправки байт инициализации
-	QueuingCleanSSD(2); // Постановка в очередь полной очистки экрана //128 изменил на 2 для отладки
+	StartLC();
+	QueuingCleanSSD(128); // Постановка в очередь полной очистки экрана //128 изменил на 2 для отладки
 	__asm__ volatile("sei" ::: "memory"); //разрешение прерываний
 }
 
@@ -152,3 +184,8 @@ void StartTWISSD1306(){
 
 // Здесь хранятся очереди задач на TWI и SPI (может потом добавлю другие)
 
+//Процедура установки указателя в начало
+void StartLC(){
+	QueuingLine(0); // Постановка в очередь вывода
+	QueuingColon(0);
+}

@@ -9,6 +9,7 @@
 #include "BatTime.h"
 #include "SSD1306.h"
 #include <avr/interrupt.h> // Подключаю обработчик прерывания
+//#include "F:\AVR\7.0\toolchain\avr8\avr8-gnu-toolchain\avr\include\util\atomic.h"
 
 #define AdrSSD1306 0x78  //Адрес устройства
 
@@ -24,6 +25,9 @@ extern unsigned char PoinQue; //указатель на массив данных для записи
 extern char CountMasPos; // Номер текущего элемента для чтения из массива 
 
 extern char CountMasWr; //Текущая позиция для записи в массив позиционирования
+
+extern unsigned char Wait;  // используется для отслеживания состояния.
+extern unsigned char sec; // используется для отсчета времени.
 
 /*
 //Порядок передачи 
@@ -67,6 +71,7 @@ void Processing(){
 						PoinProcRed++; //сдвигаю указатель в массиве задач
 						StatusTransit = 0; // данные переданы
 						TWCR = (1<<TWINT);
+						QueControl();
 					} //ПОСЛЕ ПЕРЕДАЧИ ОБНУЛЯЕТСЯ МАССИВ MasPosYk 0xFF почему??
 					break;
 					
@@ -76,6 +81,7 @@ void Processing(){
 						PoinProcRed++; // сдвигаю указатель в массиве задач
 						StatusTransit = 0; //Данные переданы
 						TWCR = (1<<TWINT); // Сброс флага прерывания от TWI. Запуск только по таймеру.
+						QueControl();
 					}
 					break;
 					
@@ -85,6 +91,7 @@ void Processing(){
 						PoinProcRed++;
 						StatusTransit = 0; // Данные переданы
 						TWCR = (1<<TWINT); // Сброс флага прерывания от TWI. Запуск только по таймеру.
+						QueControl();
 					}
 					break;
 					// Дописать вывод одного символа.
@@ -94,6 +101,7 @@ void Processing(){
 						PoinProcRed++;
 						StatusTransit = 0; // Данные переданы
 						TWCR = (1<<TWINT); // Сброс флага прерывания от TWI. Запуск только по таймеру.
+						QueControl();
 					}
 					break;
 					case 4: //Отправка массива инициализации
@@ -102,6 +110,7 @@ void Processing(){
 						PoinProcRed++;
 						StatusTransit = 0;
 						TWCR = (1<<TWINT);
+						QueControl();
 					}
 					break;
 					case 5: //Процедура очистки дисплея
@@ -111,32 +120,34 @@ void Processing(){
 						PoinQueRed++;
 						StatusTransit = 0;
 						TWCR = (1<<TWINT);
+						QueControl();
 					}
 					break;
-					case 6: //продедура вывода одного символа из памяти программ
+					case 6: //процедура вывода одного символа из памяти программ
 					c = OutPMem();
 					if(c==0){
 						PoinProcRed++;
 						StatusTransit = 0;
 						TWCR = (1<<TWINT);
+						QueControl();
+					}
+					break;
+					case 7: //процедура вывода 5ти значного числа.
+					c = PrintNum();
+					if(c==0){ //вывели все цифры
+						PoinProcRed++;
+						StatusTransit = 0;
+						TWCR = (1<<TWINT);
+						QueControl();
 					}
 					break;
 				}
 			}
-					
-		}
-	}
-	else{ // сюда если очередь пуста.
-		PoinProcRed = 0; // указатель для чтения очери обнуляем.
-		QueueProc[PoinProcRed]=0xFF; // записываем что нет в очереди задач элементов
-		StatusTransit = 0;
-		PoinQueRed = 0; // номер читаемего элемента массива данных
-		CountMasWr = 0; // Обнуляем номер элемента массива записи позиционирования каретки.
-		PoinProc = 0; // Элемента массива для записи задач
-		PoinQue=0;    // Элемент массива для записи данных
-		CountMasPos = 0; // Элемент массива позиционирования для чтения
-	}
+			break; //case 6
+		} //switch
+	}//if
 }
+
 /*
 //Разрешение прерываний
 void sei(){
@@ -150,6 +161,28 @@ void cli(){
 }
 */
 
+//Процедура обработки очереди. Пока задачи есть запускает обработку
+void QueControl(){
+	unsigned char Proc;
+		__asm__ volatile("cli" ::: "memory");
+		if(StatusTransit==0){ // если передача не идет.
+			Proc = QueueProc[PoinProcRed];
+			if(Proc!=0xFF){ // Пуста ли очередь?
+			Processing(); // если не пуста запускаю по новой
+			}
+			else{ 	// сюда если очередь пустая.
+				PoinProcRed = 0; // указатель для чтения из очереди обнуляем.
+				QueueProc[PoinProcRed]=0xFF; // записываем что нет в очереди задач элементов
+				StatusTransit = 0;
+				PoinQueRed = 0; // номер читаемего элемента массива данных
+				CountMasWr = 0; // Обнуляем номер элемента массива записи позиционирования каретки.
+				PoinProc = 0; // Элемента массива для записи задач
+				PoinQue=0;    // Элемент массива для записи данных
+				CountMasPos = 0; // Элемент массива позиционирования для чтения
+		}
+		}
+	__asm__ volatile("sei" ::: "memory");
+}
 
 
 // Прерывания
@@ -193,12 +226,22 @@ ISR(TWI_vect){ // Прерывание от модуля TWI (Это для режима ведущий передатчик)
 		break;
 	}
 }
+
 //По прерыванию от переполнения таймера счетчика запускаем обработчик очереди
-ISR(TIMER0_OVF_vect){
-	if(StatusTransit ==0){
-		if(PoinProc!=0) { // если есть задачи и очередь задач не очищена запуск обработки очереди
-			Processing(); // если передача не идет начать ее. Может увеличить частоту запуска?
+//Либо проводим отсчеты наших переменных
+//Отключать эту фигню после того как отсчитали время нажатия на кнопочку.
+
+ISR(TIMER0_OVF_vect){ 
+		sec--;
+		if(sec==0){ // закончили отсчет 
+			EncoderPres();
 		}
-	}
-	// else // проверка очереди задач если пустая очистить очереди задач и сбросить указатели в начало
+}
+
+ISR(INT0_vect){ //Прерывание при повороте энкодера
+	EncoderRet();
+}
+ISR(INT1_vect){ //Прерывание при нажатии на энкодер
+	EncoderPres();
+	
 }
