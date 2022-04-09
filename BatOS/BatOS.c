@@ -29,6 +29,14 @@ extern char CountMasWr; //Текущая позиция для записи в массив позиционирования
 extern unsigned char Wait;  // используется для отслеживания состояния.
 extern unsigned char sec; // используется для отсчета времени.
 
+extern unsigned char SPIQue[100]; // Очередь с процедурами и данными для передачи и выполнения SPI
+extern unsigned char ReadQueSPI; // Переменная хранит номер элемента для чтения из массива процедур
+extern unsigned char WriteQueSPI;
+
+char (*PtrTask[2])(); // Этот массив служит для хранения адресов функций используемых в обработчике
+// Заполняется при настройке модуля SPI на работу
+static unsigned char SPICondition=0; //переменная указывающая на состояние передачи
+
 /*
 //Порядок передачи 
 0. Передача не идет
@@ -42,7 +50,7 @@ extern unsigned char sec; // используется для отсчета времени.
 После отправки всегда отправляется адрес
 
 */
-// Процедура обработки очереди задач и очистки очереди после передачи
+// Процедура обработки очереди задач TWI и очистки очереди после передачи
 void Processing(){
 	unsigned char Proc,c;
 	char *MasSymOUT=0; // Адрес массива символы которого нужно вывести
@@ -148,20 +156,8 @@ void Processing(){
 	}//if
 }
 
-/*
-//Разрешение прерываний
-void sei(){
-		__asm__ volatile("sei" ::: "memory");
-}
-*/
-//Запрещение прерываний
-/*
-void cli(){
-	__asm__ volatile("cli" ::: "memory");
-}
-*/
 
-//Процедура обработки очереди. Пока задачи есть запускает обработку
+//Процедура обработки очереди TWI. Пока задачи есть запускает обработку
 void QueControl(){
 	unsigned char Proc;
 		__asm__ volatile("cli" ::: "memory");
@@ -184,6 +180,55 @@ void QueControl(){
 	__asm__ volatile("sei" ::: "memory");
 }
 
+//Процедура обрботки очереди SPI
+//Сюда переходим только из контроллера очереди SPIQueContrl()
+void ProcSPI(){
+	unsigned char Proc;
+	char (*TaskSPI)(); // указатель на процедуру?
+	char c;
+	Proc=SPIQue[ReadQueSPI]; // Беру задачу из массива.
+	if(Proc!=0xFF){ //задачи еще есть
+		TaskSPI=PtrTask[Proc]; // получаю адрес процедуры
+		c=TaskSPI(); // запускаю процедуру
+		if(c==0){ // передача окночена в зависимости от того какая задача юзалась сдвигаю массив
+			if(Proc==0){ // Отправка команды завершилась SendMod();
+				ReadQueSPI +=2;
+			}
+			else { // Отправка байт частоты завершилась SendFreq();
+				ReadQueSPI +=5;
+			}
+			SPICondition=0; //передача не идет
+			SPIQueContrl();
+			return;
+		}
+		else { // продолжаю передачу
+			SPICondition =1 ; // Указываю что идет передача
+			return;
+		}
+	} //if Proc
+	else { // cюда перешли значит очередь пустая
+		SPICondition=2;
+		SPIQueContrl();
+	}
+	return;
+}
+
+//Контроллер  очереди. Очищает очередь если завершили передачу. Либо вызывает обработчик очреди
+void SPIQueContrl(){
+	if(SPICondition==0){// Передача не идет
+		ProcSPI();
+	}
+	else{
+		if(SPICondition==2){ // Очередь пуста очистка очереди
+			SPICondition=0; // Передача не идет
+			ReadQueSPI=0;
+			WriteQueSPI=0;
+			SPIQue[WriteQueSPI]=0xFF;
+		}
+		//Передача идет
+	}
+	return;
+}
 
 // Прерывания
 ISR(TWI_vect){ // Прерывание от модуля TWI (Это для режима ведущий передатчик)
@@ -243,5 +288,8 @@ ISR(INT0_vect){ //Прерывание при повороте энкодера
 }
 ISR(INT1_vect){ //Прерывание при нажатии на энкодер
 	EncoderPres();
-	
+}
+ISR(SPI_STC_vect){ //Выполнена передача по SPI
+	SPICondition=0; // Указываю что передача завершилась
+	SPIQueContrl();
 }
