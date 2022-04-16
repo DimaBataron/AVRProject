@@ -14,14 +14,13 @@
 #include "BatIO.h"
 #include "BatSPI.h"
 #include "BatTWI.h"	
+#include "SetupBatOS.h"
+
 //#include "BatAD9833.h"
 #include <avr/io.h> //Описание всех регистров и портов контроллера
 
 
-// Номера процедур которые выполняются в поредке очереди SPI
-#define SendModK  0 //отправка байт режима
-#define SendFreqK 1 //отправка байт частоты
-
+#ifdef SSD1306M
 // Номера процедур которые будут выполнены в порядке очереди TWI
 #define TrMasByte 0 //[0]   передача массива байт
 #define SetLine	  1 //[1]   позиционирование строки
@@ -31,7 +30,6 @@
 #define CleanSSD  5 //[5]   процедура очистки экрана
 #define OutPMem   6 //[6]	процедура вывода байта из памяти программ
 #define PrintNum  7 //[7]   процедура вывода числа
-
 
 
 char QueueProc[100]; // максимальная длина очереди 100
@@ -49,18 +47,25 @@ unsigned char PoinQueRed=0; //Указатель на массив данных для чтения
 
 static char OldStr=0; //Предыдущее положение указателя. для перерисовки в новом месте
 static char OldCol=0; // необходимо стереть старое положение
-
-
-
 extern const char Point[]; // этот массив определен в другом файле в PROGMEM
-
+#endif
+//==================================================================
+#ifdef BatSPIM
 extern unsigned char SPIQue[100]; // Массив для хранения процедур и их данных для передачи по SPI
 extern unsigned char WriteQueSPI; // позицию для записи в массив SPIQue;
-
 extern char (*PtrTask[2])(); // массив с данными процедур
+#endif
+//===============================================================
+#ifdef AD9833M
+// Номера процедур которые выполняются в порядке очереди SPI
+#define SendModK  0 //отправка байт режима
+#define SendFreqK 1 //отправка байт частоты
+
 extern unsigned char SendMod();
 extern unsigned char SendFreq();
+#endif
 
+#ifdef SSD1306M
 //Процедура использует переменное число параметров(ВНИМАНИЕ не проверяет их корректность)
 //сюда передается  СТРОКА ИЛИ СИМВОЛ или ЦИФРА дальше все само.
 //Процедура форматированного выводы
@@ -192,11 +197,13 @@ void StartLC(){
 	QueuingLine(0); // Постановка в очередь вывода
 	QueuingColon(0);
 }
+#endif
 
+//================================================================
 //Процедура стартовой настройки модуля SPI на работу
 //Возможно перевести неиспользуемую ногу SPI в режим вывод? Для того чтобы
 //Не переводить модуль spi в режим ведомый от случайной наводки??)
-// Может перенести в другой файл?
+#ifdef AD9833M
 void StartSPIAD9833(){
 	SPIConfigPort();  // Настройка ног на работу
 	SPIConfig(((1<<SPIE)|(1<<SPE)|(1<<MSTR)|(1<<CPOL)|(1<<SPR0)),0); //Мастер скорость 1мгц
@@ -204,15 +211,20 @@ void StartSPIAD9833(){
 	PtrTask[1]=&SendFreq;
 	__asm__ volatile("sei" ::: "memory"); //разрешение прерываний
 }
-
 // процедура постановки в очередь отправку частоты на AD9833
-//Это надо все проверить внимательно
 void SendFreqAD9833(unsigned long int Dec){
 	//запись номера задачи в массив для последующего вызова
 	unsigned long int *MasSPI = 0;
+	unsigned long int FreqReg;
+	FreqReg =(unsigned long) Dec*11; // Округлил т.к. с целыми быстрее вычисления 10.7374
+	FreqReg = ((FreqReg & 0xFFFF0000)<<2) | (FreqReg & 0x0000FFFF);
+	FreqReg = ((FreqReg & 0x00008000) << 2) | (FreqReg & 0xFFFF7FFF);
+	FreqReg = ((FreqReg & 0x00004000) << 2) | (FreqReg & 0xFFFFBFFF);
+	//Указываю что использую регистр FREQ0
+	FreqReg |= 0x40004000;
 	SPIQue[WriteQueSPI++] = SendFreqK; // Записываю номер задачи в массив
 	MasSPI = (unsigned long int *)(&SPIQue[WriteQueSPI]);
-	*MasSPI = Dec; // Записываю 4байта в массив SPIQue
+	*MasSPI = FreqReg; // Записываю 4байта в массив SPIQue
 	WriteQueSPI +=4;
 	SPIQue[WriteQueSPI]=0xFF; // признак конца записи
 }
@@ -223,3 +235,4 @@ void SendModAD9833(unsigned char Mod){
 	SPIQue[WriteQueSPI++]=Mod;	 // Данные режима
 	SPIQue[WriteQueSPI]=0xFF; // Признак конца записи
 }
+#endif

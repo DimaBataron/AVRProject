@@ -5,8 +5,10 @@
  *  Author: dima
  */ 
 #include "BatTWI.h"
+#include "SetupBatOS.h"
 #include <avr/io.h> //Описание всех регистров и портов контроллера
 
+#ifdef BatTWIM
 char CountTrMasByte = 0; // переменная содержит количество уже переданных байт
 
 //ДОБАВИТЬ ПРОЦЕДУРУ НАСТРОЙКИ ПЕРЕДАЧИ 
@@ -55,3 +57,4 @@ char TrMasByte(char *MasData){
 		return 0;
 	}
 }
+#endif

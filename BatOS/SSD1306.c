@@ -9,8 +9,10 @@
  */
 #include "SSD1306.h" 
 #include "BatTWI.h"       // Подключаю модуль работы с TWI(I2P)
+#include "SetupBatOS.h"
 #include "avr\pgmspace.h" //библиотека для работы с памятью программ
 
+#ifdef SSD1306M
 #define AdrSSD1306 0x78
 /*
 ;SSD1306 ЭКРАНЧИК подключение.
@@ -18,7 +20,6 @@
 ;PC5=SCL=A5
 ;Подтягивающие резисторы?
 */
-
 //Переменная видимая только в этом файле
 static char CountTWISym=0; //Используется для хранения количества переданных байт символа
 static char CountSet=0;
@@ -366,3 +367,4 @@ char PrintNum(){
 		}
 	}
 }
+#endif

@@ -6,11 +6,12 @@
  */ 
 //Добавлю макрос ожидания. (пустые инстукции)
 
+#ifndef BATAD9833_H_
 #define BNOP() ( {\
 	__asm__ volatile("nop\n\t" "nop\n\t" :::"memory");\
 })
-
 // возвращает 1 если передача еще длится
 unsigned char SendMod(); //процедура отправки слова режима на AD9833
 
 unsigned char SendFreq(); //Процедура отправки данных частоты на AD9833
+#endif

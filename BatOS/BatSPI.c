@@ -5,6 +5,7 @@
  *  Author: dima
  */ 
 #include "BatSPI.h"
+#include "SetupBatOS.h"
 #include <avr/io.h> //Описание всех регистров и портов контроллера
 
 /*
@@ -39,7 +40,7 @@
 //SPCRB Значение записываемое в SPCRB 
 //Используется для настройки передачи в режиме ведущий.
 //=====================================================================
-
+#ifdef BatSPIM //условная компиляция
 void SPIConfigPort(){
 //Задается режим выводов в соответствии с их назначением 
 	DDRB |=(1<<DDB1)|(1<<DDB2)| (1<<DDB3)|(1<<DDB5); // Направление передачи в 1(выход)
@@ -50,3 +51,4 @@ void SPIConfig(unsigned char SPCRB, unsigned char SPI2xS ){
 	SPSR = (SPSR & (~(1<<SPI2X))) | SPI2xS; // SPI2xS =1 умножаем скорость на 2
 	SPCR = SPCRB;
 }
+#endif

@@ -9,16 +9,22 @@
  */ 
 #include "BatAD9833.h"
 #include "BatSPI.h"
+#include "SetupBatOS.h"
 #include <avr/io.h>
-
+// 
+#ifdef AD9833M
 unsigned char CountFreq=0; //Переменная хранящая состояние выполнения процедур ниже.
 unsigned char Mod=0; // глобальная переменная хранящая последнее состояние режима которое было отправлено 
+#endif
 
+#ifdef BatSPIM
 unsigned char SPIQue[100]; // Очередь для вывода SPI используется в BatOS.
 unsigned char ReadQueSPI=0; // Переменная хранит номер элемента для чтения из массива процедур
 unsigned char WriteQueSPI=0; // переменная хранит номер элемента для чтения из массива процедур
 //в микросхему AD9833
+#endif
 
+#ifdef AD9833M
 //Процедура отправки данных частоты на AD9833
 //Возвращает 1 если передача еще длится
 unsigned char SendFreq(){
@@ -87,7 +93,22 @@ unsigned char SendFreq(){
 }
 
 //Процедура отправки слова режима на AD9833
-// возвращает 1 если передача еще длится
+// возвращает 1 если передача еще длится 
+/* Описание младшего байта команды в котором передаем режим работы
+	D7 Sleep1
+	D6 Sleep12
+	D5 OPBITEN 
+	D4 зарезервировано
+	D3 DIV2
+	D1 MODE
+	D0 Зарезервировано
+	OPBITEN			MODE			DIV2			Сигнал на выходе
+	0				0				Х				Синусоидальный сигнал
+	0				1				Х				Треугольный сигнал
+	1				0				0				На выходе частота изменения старшего бита на входе DAC
+	1				0				1				--//-- DAC/2
+	
+*/
 unsigned char SendMod(){
 	if(CountFreq<2){
 		if(CountFreq==0){ //1 старший байт команды
@@ -106,3 +127,4 @@ unsigned char SendMod(){
 	//ReadQueSPI +=2;
 	return 0;
 }
+#endif

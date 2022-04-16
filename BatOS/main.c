@@ -6,10 +6,11 @@
  * Author : dima
  // В протеус не работает часть кода с атомнарными операциями почему?
  // Проверить повторное добавление в очередь SPI/
- // Проверить очистку очереди после передачи
  */ 
-#include "BatIO.h"
-#include "BatSPI.h"
+//#include "BatIO.h"
+//#include "BatSPI.h"
+#include "BatOS.h"
+#include "SetupBatOS.h"
 //#include <stdatomic.h> // атомарная либа для компилятора. Чтобы компилятор не убирал т.к. используется в
 // прерывании
 //#include <iom328p.h>
@@ -24,9 +25,9 @@ static unsigned char OldPoinMenu=0;
 static signed char CounFStep=0;	// может принимать 9 значений
 
 static volatile signed long  FStep=0;		// Величина шага изменения которую выбрали
-static volatile signed long  GenFreq=0; // Частота которую накрутили выводится на экран
-static volatile	signed long  OutFreq=0; // число которое отправляем в микросхему unsigned
-static volatile signed long Mng=0; // множитель для вычисления 
+static volatile signed long  GenFreq=0;		// Частота которую накрутили выводится на экран
+static volatile	signed long  OutFreq=0;		// число которое отправляем в микросхему unsigned
+static volatile signed long Mng=0;			// множитель для вычисления 
 	
 	char f[]="част";
 	char mod[]="сигн";
@@ -47,14 +48,10 @@ int main(void)
 	GetSygEn(); //процедура конфигурирует прерывания от энкодера
 	QueControl(); // Запускаю обработку очереди
 	
-	//Настраиваю SPI. Проверил постановка в очередь вроде бы работает
+	//Настраиваю SPI 
 	StartSPIAD9833();
 	
- 	/*
-	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) //атомарный блок ATOMIC_RESTORESTATE при выходе возвращает флаг прерываний
-	// на тот который был до отключения прерывания
-	{	
-	}
+	/*
 
 	//Примеры испозьзования процеду
 	BPrintf('d',12345,4,5); // постановка в очередь вывод числа.
@@ -318,13 +315,17 @@ void MainMenu(){
 				GenFreq = (unsigned int)(OutFreq/1000); // Получаем частоту в кгц
 				BPrintf('d',GenFreq,2,3);
 				//Теперь надо отправить значение частоты в микросхему AD9833 Str 
+				//Это все перенес внутрь функции SendFreqAD9833
+				/*
 				FreqReg =(unsigned long) OutFreq*11; // Округлил т.к. с целыми быстрее вычисления 10.7374
 				FreqReg = ((FreqReg & 0xFFFF0000)<<2) | (FreqReg & 0x0000FFFF);
 				FreqReg = ((FreqReg & 0x00008000) << 2) | (FreqReg & 0xFFFF7FFF);
 				FreqReg = ((FreqReg & 0x00004000) << 2) | (FreqReg & 0xFFFFBFFF);
 				//Указываю что использую регистр FREQ0
 				FreqReg |= 0x40004000;
-				SendFreqAD9833(FreqReg); // Отправляю значение частоты на микрохему
+				*/
+				SendFreqAD9833(OutFreq); // Отправляю значение частоты на микрохему
+				
 				SPIQueContrl(); // Запускаю на выполнение отправку байт на AD9833.
 			}
 			QueControl();

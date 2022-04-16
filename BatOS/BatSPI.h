@@ -4,6 +4,7 @@
  * Created: 15.01.2022 14:20:41
  *  Author: dima
  */ 
+#ifndef BATSPI_H_
 //Определяю макрос для вывода данных
 #define DSPDR(a) (SPDR=a)
 //Процедура настройки ног на передачу
@@ -12,4 +13,4 @@ void SPIConfigPort();
 void SPIConfig(unsigned char SPCRB, unsigned char SPI2xS );
 //Процедура записи данных для передачи по SPI Заменил макросом
 //void BSPDR(unsigned char DSPDR);
-
+#endif 
